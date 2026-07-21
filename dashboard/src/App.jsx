@@ -1,5 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Alert, AppBar, Box, Button, Card, CardContent, Chip, Container, Dialog, DialogContent, DialogTitle, Grid, IconButton, InputAdornment, Paper, Stack, Table, TableBody, TableCell, TableHead, TablePagination, TableRow, TextField, Toolbar, Typography } from '@mui/material'
+import {
+  Alert,
+  Button,
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  IconButton,
+  InputAdornment,
+  Stack,
+  TablePagination,
+  TextField,
+} from '@mui/material'
+import CloseIcon from '@mui/icons-material/Close'
 import LogoutIcon from '@mui/icons-material/Logout'
 import SearchIcon from '@mui/icons-material/Search'
 import CameraSidebar from './components/CameraSidebar'
@@ -7,38 +19,243 @@ import LiveGrid from './components/LiveGrid'
 import { API_BASE, api, login } from './api'
 import { useDashboardSocket } from './useDashboardSocket'
 
+const formatDateTime = value => {
+  if (!value) return '—'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString('id-ID')
+}
+
 function Login({ onLogin }) {
   const [username, setUsername] = useState('admin')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+
   const submit = async event => {
     event.preventDefault()
-    try { setError(''); onLogin((await login(username, password)).access_token) } catch (err) { setError(err.message) }
+    setError('')
+    setLoading(true)
+    try {
+      onLogin((await login(username, password)).access_token)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
   }
-  return <Container maxWidth="xs" sx={{ pt: 14 }}><Paper sx={{ p: 3 }} component="form" onSubmit={submit}>
-    <Typography variant="h5" mb={2}>CCTV People Flow</Typography><Stack spacing={2}>
-      <TextField label="Username" value={username} onChange={event => setUsername(event.target.value)} />
-      <TextField label="Password" type="password" value={password} onChange={event => setPassword(event.target.value)} error={!!error} helperText={error} />
-      <Button type="submit" variant="contained">Masuk</Button>
-    </Stack>
-  </Paper></Container>
+
+  return <main className="login-shell">
+    <section className="login-context" aria-labelledby="login-context-title">
+      <div>
+        <h1 id="login-context-title">Satu ruang kendali. Semua kamera.</h1>
+        <p>Pantau pergerakan orang, kondisi kamera, dan event lintas garis dari satu layar operasional.</p>
+      </div>
+    </section>
+    <section className="login-panel">
+      <form className="login-form" onSubmit={submit}>
+        <h2>Masuk ke ruang kendali</h2>
+        <p>Gunakan akun operator yang dikonfigurasi pada server.</p>
+        <Stack spacing={2}>
+          <TextField
+            className="light-field"
+            label="Username"
+            value={username}
+            onChange={event => setUsername(event.target.value)}
+            autoComplete="username"
+            required
+            fullWidth
+          />
+          <TextField
+            className="light-field"
+            label="Password"
+            type="password"
+            value={password}
+            onChange={event => setPassword(event.target.value)}
+            autoComplete="current-password"
+            error={Boolean(error)}
+            helperText={error || ' '}
+            required
+            fullWidth
+          />
+          <Button className="login-submit" type="submit" variant="contained" disabled={loading}>
+            {loading ? 'Memeriksa akun…' : 'Masuk'}
+          </Button>
+        </Stack>
+      </form>
+    </section>
+  </main>
 }
 
-function Metric({ label, value, color = 'primary.main' }) {
-  return <Card variant="outlined"><CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}><Typography variant="body2" color="text.secondary">{label}</Typography><Typography variant="h4" color={color}>{value}</Typography></CardContent></Card>
+function Metric({ label, value, tone = 'neutral' }) {
+  return <div className="metric-cell tnum" data-tone={tone}>
+    <span>{label}</span>
+    <strong aria-live="polite">{value}</strong>
+  </div>
 }
 
 function EventHistory({ events, total, page, rowsPerPage, date, onDate, onPage, onRowsPerPage, onSnapshot }) {
-  return <Paper sx={{ p: 2, mt: 2 }}>
-    <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" gap={1} mb={1}>
-      <Typography variant="h6">Riwayat Event</Typography>
-      <TextField size="small" type="date" label="Tanggal" InputLabelProps={{ shrink: true }} value={date} onChange={event => onDate(event.target.value)} />
-    </Stack>
-    <Box sx={{ overflowX: 'auto' }}><Table size="small"><TableHead><TableRow><TableCell>Waktu</TableCell><TableCell>Kamera</TableCell><TableCell>Lokasi</TableCell><TableCell>Status</TableCell><TableCell>Tracking</TableCell><TableCell>Snapshot</TableCell></TableRow></TableHead>
-      <TableBody>{events.map(event => <TableRow key={event.id} hover><TableCell>{new Date(event.occurred_at).toLocaleString()}</TableCell><TableCell>{event.camera_name || '—'}</TableCell><TableCell>{event.camera_location || '—'}</TableCell><TableCell><Chip size="small" color={event.event_type === 'ENTER' ? 'success' : 'error'} label={event.event_type === 'ENTER' ? 'MASUK' : 'KELUAR'} /></TableCell><TableCell>{event.tracking_id}</TableCell><TableCell><Button size="small" onClick={() => onSnapshot(event.snapshot_url)} disabled={!event.snapshot_url}>Preview</Button></TableCell></TableRow>)}</TableBody>
-    </Table></Box>
-    <TablePagination component="div" count={total} page={page} rowsPerPage={rowsPerPage} rowsPerPageOptions={[10, 20, 50]} onPageChange={(_, value) => onPage(value)} onRowsPerPageChange={event => onRowsPerPage(Number(event.target.value))} />
-  </Paper>
+  return <section className="event-ledger" id="event-history" aria-labelledby="event-history-title">
+    <div className="section-heading">
+      <div>
+        <h2 className="section-title" id="event-history-title">Riwayat pergerakan</h2>
+        <p className="section-copy">Event terbaru dari seluruh kamera aktif.</p>
+      </div>
+      <TextField
+        className="light-field"
+        size="small"
+        type="date"
+        label="Tanggal event"
+        InputLabelProps={{ shrink: true }}
+        value={date}
+        onChange={event => onDate(event.target.value)}
+      />
+    </div>
+    <div className="ledger-table-wrap">
+      <table className="ledger-table">
+        <thead>
+          <tr>
+            <th>Waktu</th>
+            <th>Kamera</th>
+            <th>Lokasi</th>
+            <th>Status</th>
+            <th>Tracking</th>
+            <th>Snapshot</th>
+          </tr>
+        </thead>
+        <tbody>
+          {events.map(event => <tr key={event.id}>
+            <td data-label="Waktu">{formatDateTime(event.occurred_at)}</td>
+            <td data-label="Kamera">{event.camera_name || '—'}</td>
+            <td data-label="Lokasi">{event.camera_location || '—'}</td>
+            <td data-label="Status">
+              <span className="event-status" data-event={event.event_type}>
+                <span className="status-dot" data-status={event.event_type === 'ENTER' ? 'ONLINE' : 'ERROR'} />
+                {event.event_type === 'ENTER' ? 'MASUK' : 'KELUAR'}
+              </span>
+            </td>
+            <td data-label="Tracking">#{event.tracking_id ?? '—'}</td>
+            <td data-label="Snapshot">
+              <Button
+                className="action-button"
+                size="small"
+                variant="outlined"
+                onClick={() => onSnapshot(event.snapshot_url)}
+                disabled={!event.snapshot_url}
+              >
+                Lihat foto
+              </Button>
+            </td>
+          </tr>)}
+          {!events.length && <tr><td colSpan="6"><p className="empty-copy">Belum ada event untuk filter ini.</p></td></tr>}
+        </tbody>
+      </table>
+    </div>
+    <TablePagination
+      component="div"
+      count={total}
+      page={page}
+      rowsPerPage={rowsPerPage}
+      rowsPerPageOptions={[10, 20, 50]}
+      labelRowsPerPage="Baris"
+      onPageChange={(_, value) => onPage(value)}
+      onRowsPerPageChange={event => onRowsPerPage(Number(event.target.value))}
+    />
+  </section>
+}
+
+function IdentityPanel({ persons, search, onSearch }) {
+  return <aside className="identity-panel" id="identity-panel" aria-labelledby="identity-title">
+    <div>
+      <h2 className="section-title" id="identity-title">Identitas terakhir</h2>
+      <p className="section-copy">Cari nama atau kunci ReID.</p>
+    </div>
+    <TextField
+      className="light-field"
+      fullWidth
+      size="small"
+      label="Nama / ReID key"
+      value={search}
+      onChange={event => onSearch(event.target.value)}
+      InputProps={{ startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment> }}
+    />
+    <ul className="person-list">
+      {persons.map(person => {
+        const label = person.display_name || person.reid_key || 'Tanpa nama'
+        return <li key={person.id}>
+          <span className="person-avatar" aria-hidden="true">{label.slice(0, 2).toUpperCase()}</span>
+          <div className="person-meta">
+            <strong>{label}</strong>
+            <span>Terlihat {formatDateTime(person.last_seen_at)}</span>
+          </div>
+        </li>
+      })}
+    </ul>
+    {!persons.length && <p className="empty-copy">Identitas tidak ditemukan.</p>}
+  </aside>
+}
+
+function CommandPalette({ open, query, activeIndex, items, onQuery, onActiveIndex, onChoose, onClose }) {
+  const inputRef = useRef(null)
+
+  useEffect(() => {
+    if (open) window.setTimeout(() => inputRef.current?.focus(), 0)
+  }, [open])
+
+  const handleKeyDown = event => {
+    if (!items.length) return
+    if (event.key === 'ArrowDown') {
+      event.preventDefault()
+      onActiveIndex((activeIndex + 1) % items.length)
+    }
+    if (event.key === 'ArrowUp') {
+      event.preventDefault()
+      onActiveIndex((activeIndex - 1 + items.length) % items.length)
+    }
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      onChoose(items[activeIndex] || items[0])
+    }
+  }
+
+  const groups = items.reduce((result, item, index) => {
+    result[item.group] = [...(result[item.group] || []), { ...item, flatIndex: index }]
+    return result
+  }, {})
+
+  return <Dialog className="command-dialog" open={open} onClose={onClose} fullWidth maxWidth="sm">
+    <div className="command-dialog__head">
+      <SearchIcon aria-hidden="true" />
+      <input
+        ref={inputRef}
+        value={query}
+        onChange={event => { onQuery(event.target.value); onActiveIndex(0) }}
+        onKeyDown={handleKeyDown}
+        placeholder="Cari kamera, orang, atau event…"
+        aria-label="Pencarian cepat"
+        aria-controls="command-results"
+      />
+      <kbd>esc</kbd>
+    </div>
+    <div className="command-results" id="command-results" role="listbox">
+      {Object.entries(groups).map(([group, groupItems]) => <section key={group}>
+        <p className="command-group">{group}</p>
+        {groupItems.map(item => <button
+          type="button"
+          className="command-item"
+          key={item.key}
+          data-active={item.flatIndex === activeIndex}
+          role="option"
+          aria-selected={item.flatIndex === activeIndex}
+          onMouseEnter={() => onActiveIndex(item.flatIndex)}
+          onClick={() => onChoose(item)}
+        >
+          <span><strong>{item.label}</strong><span>{item.description}</span></span>
+          <code>{item.meta}</code>
+        </button>)}
+      </section>)}
+      {!items.length && <p className="command-empty">Tidak ada kamera, orang, atau event yang cocok.</p>}
+    </div>
+  </Dialog>
 }
 
 function App() {
@@ -62,6 +279,9 @@ function App() {
   const [socketStatus, setSocketStatus] = useState('disconnected')
   const [error, setError] = useState('')
   const [clock, setClock] = useState(Date.now())
+  const [commandOpen, setCommandOpen] = useState(false)
+  const [commandQuery, setCommandQuery] = useState('')
+  const [commandIndex, setCommandIndex] = useState(0)
   const initializedSelection = useRef(false)
 
   const loadCameras = useCallback(async () => {
@@ -94,14 +314,35 @@ function App() {
   useEffect(() => {
     if (!token) return undefined
     Promise.all([loadCameras(), loadDashboard()]).catch(err => setError(err.message))
-    const refresh = window.setInterval(() => Promise.all([loadCameras(), loadDashboard()]).catch(err => setError(err.message)), 30000)
+    const refresh = window.setInterval(
+      () => Promise.all([loadCameras(), loadDashboard()]).catch(err => setError(err.message)),
+      30000,
+    )
     return () => window.clearInterval(refresh)
   }, [token, loadCameras, loadDashboard])
-  useEffect(() => { const timer = window.setInterval(() => setClock(Date.now()), 5000); return () => window.clearInterval(timer) }, [])
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setClock(Date.now()), 5000)
+    return () => window.clearInterval(timer)
+  }, [])
+
   useEffect(() => {
     if (!token) return
-    api(`/persons?limit=20${personSearch ? `&name=${encodeURIComponent(personSearch)}` : ''}`, token).then(page => setPersons(page.items)).catch(err => setError(err.message))
+    api(`/persons?limit=20${personSearch ? `&name=${encodeURIComponent(personSearch)}` : ''}`, token)
+      .then(page => setPersons(page.items))
+      .catch(err => setError(err.message))
   }, [token, personSearch])
+
+  useEffect(() => {
+    const openCommand = event => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        setCommandOpen(true)
+      }
+    }
+    window.addEventListener('keydown', openCommand)
+    return () => window.removeEventListener('keydown', openCommand)
+  }, [])
 
   useDashboardSocket(token, selectedIds, message => {
     if (message.type === 'frame') setFrames(current => ({ ...current, [message.camera_id]: { ...message, receivedAt: Date.now() } }))
@@ -118,6 +359,7 @@ function App() {
     const frameIsRecent = frame && clock - frame.receivedAt < 15000
     return { ...camera, effectiveStatus: frameIsRecent ? 'ONLINE' : (camera.status || 'OFFLINE') }
   }), [cameras, frames, clock])
+
   const selectedCameras = selectedIds.map(id => camerasWithStatus.find(camera => camera.id === id)).filter(Boolean)
   const onlineCount = camerasWithStatus.filter(camera => camera.effectiveStatus === 'ONLINE').length
   const offlineCount = camerasWithStatus.length - onlineCount
@@ -127,7 +369,21 @@ function App() {
     setGridSize(value)
     setSelectedIds(current => current.slice(0, value))
   }
-  const toggleCamera = cameraId => setSelectedIds(current => current.includes(cameraId) ? current.filter(id => id !== cameraId) : current.length < gridSize ? [...current, cameraId] : current)
+
+  const toggleCamera = cameraId => setSelectedIds(current => {
+    if (current.includes(cameraId)) return current.filter(id => id !== cameraId)
+    return current.length < gridSize ? [...current, cameraId] : current
+  })
+
+  const focusCamera = cameraId => {
+    setSelectedIds(current => {
+      if (current.includes(cameraId)) return current
+      if (current.length < gridSize) return [...current, cameraId]
+      return [...current.slice(1), cameraId]
+    })
+    document.querySelector('.workbench-band')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
   const logout = () => {
     localStorage.removeItem('cctv-token')
     initializedSelection.current = false
@@ -136,25 +392,159 @@ function App() {
     setSelectedIds([])
   }
 
+  const commandItems = useMemo(() => {
+    const normalized = commandQuery.trim().toLowerCase()
+    const matches = value => !normalized || value.toLowerCase().includes(normalized)
+    const cameraItems = camerasWithStatus
+      .filter(camera => matches(`${camera.name} ${camera.location || ''} ${camera.zone || ''}`))
+      .slice(0, 6)
+      .map(camera => ({
+        key: `camera-${camera.id}`,
+        group: 'Kamera',
+        label: camera.name,
+        description: camera.location || camera.zone || 'Lokasi belum diisi',
+        meta: camera.effectiveStatus,
+        action: () => focusCamera(camera.id),
+      }))
+    const personItems = persons
+      .filter(person => matches(`${person.display_name || ''} ${person.reid_key || ''}`))
+      .slice(0, 5)
+      .map(person => ({
+        key: `person-${person.id}`,
+        group: 'Identitas',
+        label: person.display_name || person.reid_key || 'Tanpa nama',
+        description: `Terlihat ${formatDateTime(person.last_seen_at)}`,
+        meta: 'REID',
+        action: () => {
+          setPersonSearch(person.display_name || person.reid_key || '')
+          document.getElementById('identity-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        },
+      }))
+    const eventItems = events
+      .filter(event => matches(`${event.camera_name || ''} ${event.camera_location || ''} ${event.event_type || ''} ${event.tracking_id || ''}`))
+      .slice(0, 5)
+      .map(event => ({
+        key: `event-${event.id}`,
+        group: 'Event terbaru',
+        label: `${event.event_type === 'ENTER' ? 'Masuk' : 'Keluar'} · ${event.camera_name || 'Kamera'}`,
+        description: formatDateTime(event.occurred_at),
+        meta: `#${event.tracking_id ?? '—'}`,
+        action: () => {
+          document.getElementById('event-history')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+          if (event.snapshot_url) setSnapshot(snapshotUrl(event.snapshot_url))
+        },
+      }))
+    return [...cameraItems, ...personItems, ...eventItems]
+  }, [commandQuery, camerasWithStatus, persons, events, gridSize])
+
+  const chooseCommand = item => {
+    item?.action()
+    setCommandOpen(false)
+    setCommandQuery('')
+    setCommandIndex(0)
+  }
+
   if (!token) return <Login onLogin={value => { localStorage.setItem('cctv-token', value); setToken(value) }} />
-  return <>
-    <AppBar position="sticky"><Toolbar><Typography variant="h6" sx={{ flexGrow: 1 }}>CCTV People Flow</Typography><Chip size="small" sx={{ mr: 1 }} color={socketStatus === 'connected' ? 'success' : 'warning'} label={`Realtime: ${socketStatus}`} /><IconButton color="inherit" onClick={logout}><LogoutIcon /></IconButton></Toolbar></AppBar>
-    <Container maxWidth={false} sx={{ py: 2 }}>
-      {error && <Alert severity="error" onClose={() => setError('')} sx={{ mb: 2 }}>{error}</Alert>}
-      <Grid container spacing={1.5} mb={2}>
-        <Grid item xs={6} md={2}><Metric label="Total Kamera" value={cameras.length} /></Grid><Grid item xs={6} md={2}><Metric label="Online" value={onlineCount} color="success.main" /></Grid><Grid item xs={6} md={2}><Metric label="Offline" value={offlineCount} color="error.main" /></Grid><Grid item xs={6} md={2}><Metric label="Masuk Hari Ini" value={stats.enter_count} color="success.main" /></Grid><Grid item xs={6} md={2}><Metric label="Keluar Hari Ini" value={stats.exit_count} color="error.main" /></Grid><Grid item xs={6} md={2}><Metric label="Orang Saat Ini" value={occupancy} /></Grid>
-      </Grid>
-      <Paper variant="outlined" sx={{ display: { xs: 'block', lg: 'flex' }, overflow: 'hidden' }}>
-        <CameraSidebar cameras={camerasWithStatus} selectedIds={selectedIds} limit={gridSize} search={cameraSearch} statusFilter={statusFilter} onSearch={setCameraSearch} onStatusFilter={setStatusFilter} onToggle={toggleCamera} />
-        <Box sx={{ p: 2, flex: 1, borderLeft: { lg: 1 }, borderColor: 'divider' }}><LiveGrid cameras={selectedCameras} frames={frames} gridSize={gridSize} onGridSize={changeGridSize} /></Box>
-      </Paper>
-      <Grid container spacing={2}>
-        <Grid item xs={12} lg={9}><EventHistory events={events} total={eventTotal} page={eventPage} rowsPerPage={rowsPerPage} date={date} onDate={value => { setDate(value); setEventPage(0) }} onPage={setEventPage} onRowsPerPage={value => { setRowsPerPage(value); setEventPage(0) }} onSnapshot={value => setSnapshot(snapshotUrl(value))} /></Grid>
-        <Grid item xs={12} lg={3}><Paper sx={{ p: 2, mt: 2 }}><Typography variant="h6">Pencarian Identitas</Typography><TextField fullWidth size="small" sx={{ my: 2 }} label="Nama / ReID key" value={personSearch} onChange={event => setPersonSearch(event.target.value)} InputProps={{ startAdornment: <InputAdornment position="start"><SearchIcon /></InputAdornment> }} />{persons.map(person => <Box key={person.id} sx={{ py: 1, borderBottom: 1, borderColor: 'divider' }}><Typography>{person.display_name || person.reid_key || 'Tanpa nama'}</Typography><Typography variant="caption">Terakhir terlihat: {new Date(person.last_seen_at).toLocaleString()}</Typography></Box>)}</Paper></Grid>
-      </Grid>
-    </Container>
-    <Dialog open={!!snapshot} onClose={() => setSnapshot(null)} maxWidth="md" fullWidth><DialogTitle>Preview Snapshot</DialogTitle><DialogContent>{snapshot && <Box component="img" src={snapshot} alt="Snapshot" sx={{ width: '100%' }} />}</DialogContent></Dialog>
-  </>
+
+  return <div className="app-shell">
+    <header className="control-nav">
+      <div className="control-nav__inner">
+        <div className="brand-lockup">
+          <span className="brand-mark" aria-hidden="true">PF</span>
+          <div className="brand-copy"><strong>People Flow Control</strong><span>Realtime operations</span></div>
+        </div>
+        <button className="search-trigger" type="button" onClick={() => setCommandOpen(true)} aria-label="Buka pencarian cepat">
+          <SearchIcon fontSize="small" aria-hidden="true" />
+          <span className="search-trigger__label">Cari kamera, orang, atau event</span>
+          <kbd>⌘ K</kbd>
+        </button>
+        <div className="control-nav__actions">
+          <span className="connection-pill">
+            <span className="status-dot" data-status={socketStatus} />
+            {socketStatus === 'connected' ? 'Realtime aktif' : socketStatus}
+          </span>
+          <IconButton className="icon-action" onClick={logout} aria-label="Keluar dari dashboard"><LogoutIcon /></IconButton>
+        </div>
+      </div>
+    </header>
+
+    <main className="dashboard-main">
+      {error && <Alert className="error-banner" severity="error" onClose={() => setError('')}>{error}</Alert>}
+
+      <section className="dashboard-intro" aria-labelledby="dashboard-title">
+        <h1 id="dashboard-title">Pusat monitoring CCTV</h1>
+        <p>Pilih feed yang memerlukan perhatian, periksa pergerakan terbaru, lalu telusuri identitas tanpa berpindah layar.</p>
+      </section>
+
+      <section className="metric-strip" aria-label="Ringkasan operasional hari ini">
+        <Metric label="Total kamera" value={cameras.length} />
+        <Metric label="Online" value={onlineCount} tone="success" />
+        <Metric label="Offline" value={offlineCount} tone="error" />
+        <Metric label="Masuk hari ini" value={stats.enter_count} tone="success" />
+        <Metric label="Keluar hari ini" value={stats.exit_count} tone="error" />
+        <Metric label="Orang saat ini" value={occupancy} />
+      </section>
+
+      <section className="workbench-band" aria-labelledby="live-workbench-title">
+        <div className="workbench-heading">
+          <h2 id="live-workbench-title">Live workbench</h2>
+          <p>Frame hanya dikirim untuk kamera yang dipilih—maksimal 16 feed per layar.</p>
+        </div>
+        <div className="workbench-layout">
+          <CameraSidebar
+            cameras={camerasWithStatus}
+            selectedIds={selectedIds}
+            limit={gridSize}
+            search={cameraSearch}
+            statusFilter={statusFilter}
+            onSearch={setCameraSearch}
+            onStatusFilter={setStatusFilter}
+            onToggle={toggleCamera}
+          />
+          <LiveGrid cameras={selectedCameras} frames={frames} gridSize={gridSize} onGridSize={changeGridSize} />
+        </div>
+      </section>
+
+      <div className="data-section">
+        <EventHistory
+          events={events}
+          total={eventTotal}
+          page={eventPage}
+          rowsPerPage={rowsPerPage}
+          date={date}
+          onDate={value => { setDate(value); setEventPage(0) }}
+          onPage={setEventPage}
+          onRowsPerPage={value => { setRowsPerPage(value); setEventPage(0) }}
+          onSnapshot={value => setSnapshot(snapshotUrl(value))}
+        />
+        <IdentityPanel persons={persons} search={personSearch} onSearch={setPersonSearch} />
+      </div>
+
+      <footer className="system-footer">
+        <span>People Flow Control · CCTV Operations</span>
+        <span className="tnum">{onlineCount}/{cameras.length} kamera online · {socketStatus}</span>
+      </footer>
+    </main>
+
+    <CommandPalette
+      open={commandOpen}
+      query={commandQuery}
+      activeIndex={commandIndex}
+      items={commandItems}
+      onQuery={setCommandQuery}
+      onActiveIndex={setCommandIndex}
+      onChoose={chooseCommand}
+      onClose={() => { setCommandOpen(false); setCommandQuery(''); setCommandIndex(0) }}
+    />
+
+    <Dialog className="snapshot-dialog" open={Boolean(snapshot)} onClose={() => setSnapshot(null)} maxWidth="md" fullWidth>
+      <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        Preview snapshot
+        <IconButton className="icon-action" onClick={() => setSnapshot(null)} aria-label="Tutup preview"><CloseIcon /></IconButton>
+      </DialogTitle>
+      <DialogContent>{snapshot && <img className="snapshot-image" src={snapshot} alt="Snapshot event CCTV" />}</DialogContent>
+    </Dialog>
+  </div>
 }
 
 export default App

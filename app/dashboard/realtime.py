@@ -29,6 +29,10 @@ class DashboardHub:
         self._connections.pop(websocket, None)
         self._logger.info("Dashboard disconnected; clients=%s", len(self._connections))
 
+    def has_subscribers(self, camera_id: str) -> bool:
+        """Avoid JPEG encoding when no dashboard is watching a camera."""
+        return any(camera_id in camera_ids for camera_ids in self._connections.values())
+
     async def subscribe(self, websocket: WebSocket, camera_ids: list[str]) -> set[str]:
         """Replace a client's camera subscription with at most sixteen unique IDs."""
         if websocket not in self._connections:

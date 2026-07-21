@@ -44,6 +44,12 @@ Container API otomatis menjalankan migration `0003_camera_dashboard` saat
 startup. Publisher realtime harus mengirim `camera_id` yang sama dengan ID pada
 database ketika memanggil `dashboard_hub.publish_frame(...)`.
 
+`CameraRuntimeManager` aktif secara default. Manager memuat kamera aktif dari
+PostgreSQL, membuka sumber RTSP/HLS, memperbarui status kesehatan, dan hanya
+melakukan encoding JPEG ketika dashboard berlangganan ke kamera tersebut. Atur
+`DASHBOARD_STREAM_FPS` serta `DASHBOARD_JPEG_QUALITY` untuk menyeimbangkan
+kelancaran live view dengan CPU dan bandwidth.
+
 Hentikan layanan dengan `docker compose down`. Tambahkan `-v` hanya bila data
 PostgreSQL memang ingin dihapus.
 

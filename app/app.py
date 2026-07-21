@@ -7,7 +7,10 @@ from fastapi.staticfiles import StaticFiles
 from app.api.error_handlers import register_exception_handlers
 from app.api.router import api_router
 from app.config.settings import get_settings
-from app.database.session import engine
+from app.dashboard.realtime import dashboard_hub
+from app.database.session import SessionLocal, engine
+from app.repository import CameraRuntimeRepository
+from app.services.camera_runtime_manager import CameraRuntimeManager
 from app.utils.logging import configure_logging
 from app.utils.runtime import configure_compute_runtime
 
@@ -18,8 +21,20 @@ async def lifespan(_: FastAPI):
     settings = get_settings()
     configure_logging(settings.log_level)
     configure_compute_runtime(settings)
-    yield
-    await engine.dispose()
+    camera_runtime: CameraRuntimeManager | None = None
+    if settings.enable_camera_runtime:
+        camera_runtime = CameraRuntimeManager(
+            settings,
+            CameraRuntimeRepository(SessionLocal),
+            dashboard_hub,
+        )
+        await camera_runtime.start()
+    try:
+        yield
+    finally:
+        if camera_runtime is not None:
+            await camera_runtime.stop()
+        await engine.dispose()
 
 
 def create_app() -> FastAPI:

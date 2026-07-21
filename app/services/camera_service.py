@@ -77,6 +77,7 @@ class CameraService:
 
         self._capture: VideoCaptureProtocol | None = None
         self._latest_frame: Any | None = None
+        self._frame_number = 0
         self._frame_lock = threading.Lock()
         self._capture_lock = threading.Lock()
         self._stop_event = threading.Event()
@@ -128,6 +129,7 @@ class CameraService:
             self._release_capture_locked()
         with self._frame_lock:
             self._latest_frame = None
+            self._frame_number = 0
         self._logger.info("Camera disconnected")
 
     def get_frame(self, *, copy: bool = True) -> Any | None:
@@ -136,6 +138,14 @@ class CameraService:
             if self._latest_frame is None:
                 return None
             return self._latest_frame.copy() if copy else self._latest_frame
+
+    def get_frame_snapshot(self, *, copy: bool = True) -> tuple[int, Any | None]:
+        """Return an atomic frame sequence and image for duplicate suppression."""
+        with self._frame_lock:
+            if self._latest_frame is None:
+                return self._frame_number, None
+            frame = self._latest_frame.copy() if copy else self._latest_frame
+            return self._frame_number, frame
 
     def is_connected(self) -> bool:
         """Return whether OpenCV currently reports an open RTSP capture."""
@@ -172,6 +182,7 @@ class CameraService:
 
             with self._frame_lock:
                 self._latest_frame = frame
+                self._frame_number += 1
             elapsed = time.monotonic() - started_at
             self._stop_event.wait(max(0.0, interval - elapsed))
 

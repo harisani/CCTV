@@ -71,6 +71,11 @@ class Settings(BaseSettings):
     camera_frame_width: int = Field(default=1280, gt=0)
     camera_frame_height: int = Field(default=720, gt=0)
     camera_reconnect_delay_seconds: float = Field(default=3.0, gt=0)
+    camera_sync_interval_seconds: float = Field(default=5.0, gt=0)
+    dashboard_stream_fps: float = Field(default=2.0, gt=0, le=10)
+    dashboard_jpeg_quality: int = Field(default=70, ge=30, le=95)
+    camera_health_update_seconds: float = Field(default=30.0, gt=0)
+    enable_camera_runtime: bool = True
     torch_num_threads: int = Field(default=0, ge=0)
     opencv_num_threads: int = Field(default=0, ge=0)
 

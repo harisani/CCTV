@@ -1,0 +1,53 @@
+{
+  "scanned_at": "2026-07-21T22:36:02+07:00",
+  "design_system": null,
+  "framework": {
+    "name": "React + Vite",
+    "react_version": "18.3.1",
+    "vite_version": "5.4.8",
+    "source": "dashboard/package.json:16-21"
+  },
+  "ui_library": {
+    "name": "Material UI",
+    "version": "6.1.6",
+    "source": "dashboard/package.json:12-15"
+  },
+  "font_stack": {
+    "status": "not_declared",
+    "source": "dashboard/index.html:3"
+  },
+  "palette": {
+    "mode": "dark",
+    "primary": "#4fc3f7",
+    "tokenized": false,
+    "source": "dashboard/src/main.jsx:6"
+  },
+  "motion": {
+    "stance": "motion-cut",
+    "library": null,
+    "source": "dashboard/package.json:11-22"
+  },
+  "spacing": {
+    "system": "MUI default spacing",
+    "custom_scale": false,
+    "source": "dashboard/src/App.jsx:142-153"
+  },
+  "responsive": {
+    "system": "MUI breakpoint props",
+    "source": "dashboard/src/App.jsx:144-153"
+  },
+  "package_mtime_epoch": 1784608125,
+  "preserve": [
+    "React + Vite runtime",
+    "Material UI component ownership",
+    "existing routes and dashboard behavior",
+    "WebSocket live-monitor workflow"
+  ],
+  "introduce": [
+    "Hallmark token system",
+    "intentional dashboard macrostructure",
+    "accessible interaction states",
+    "mobile verification at 320/375/414/768",
+    "slop-test gates"
+  ]
+}
