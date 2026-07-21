@@ -1,0 +1,43 @@
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+
+from app.api.error_handlers import register_exception_handlers
+from app.api.router import api_router
+from app.config.settings import get_settings
+from app.database.session import engine
+from app.utils.logging import configure_logging
+from app.utils.runtime import configure_compute_runtime
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    """Set up and release process-wide resources for the HTTP application."""
+    settings = get_settings()
+    configure_logging(settings.log_level)
+    configure_compute_runtime(settings)
+    yield
+    await engine.dispose()
+
+
+def create_app() -> FastAPI:
+    """Build the ASGI application and keep infrastructure wiring at the edge."""
+    settings = get_settings()
+    settings.storage_path.mkdir(parents=True, exist_ok=True)
+    application = FastAPI(title=settings.app_name, debug=settings.debug, lifespan=lifespan)
+    application.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "DELETE"],
+        allow_headers=["Authorization", "Content-Type"],
+    )
+    register_exception_handlers(application)
+    application.include_router(api_router, prefix="/api/v1")
+    application.mount("/storage", StaticFiles(directory=str(settings.storage_path)), name="storage")
+    return application
+
+
+app = create_app()
