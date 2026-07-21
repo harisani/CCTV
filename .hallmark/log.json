@@ -5,5 +5,12 @@
     "theme": "Cobalt",
     "enrichment": "none",
     "brief": "Dashboard operasional untuk monitoring banyak CCTV, respons event, dan pencarian identitas"
+  },
+  {
+    "date": "2026-07-21",
+    "macrostructure": "Index-First",
+    "theme": "Cobalt",
+    "enrichment": "none",
+    "brief": "Administrasi user/RBAC dan konfigurasi kamera berbasis tabel operasional"
   }
 ]

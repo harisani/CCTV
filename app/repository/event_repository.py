@@ -44,7 +44,12 @@ class EventRepository(BaseRepository[Event]):
             filters.append(Event.occurred_at >= start_at)
         if end_at is not None:
             filters.append(Event.occurred_at <= end_at)
-        event_statement = select(Event).join(Tracking).where(*filters)
+        event_statement = (
+            select(Event)
+            .select_from(Event)
+            .join(Tracking, Tracking.id == Event.tracking_id)
+            .where(*filters)
+        )
         statement = (
             event_statement
             .outerjoin(Snapshot, Snapshot.event_id == Event.id)

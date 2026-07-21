@@ -5,6 +5,9 @@ from fastapi import WebSocket, WebSocketDisconnect, status
 
 from app.config.settings import get_settings
 from app.dashboard.realtime import dashboard_hub
+from app.database.session import SessionLocal
+from app.models import User
+from uuid import UUID
 
 
 async def dashboard_websocket(websocket: WebSocket) -> None:
@@ -15,9 +18,12 @@ async def dashboard_websocket(websocket: WebSocket) -> None:
         payload: dict[str, Any] = jwt.decode(
             token or "", settings.jwt_secret, algorithms=[settings.jwt_algorithm]
         )
-        if payload.get("sub") != settings.api_admin_username:
-            raise jwt.InvalidTokenError("Invalid subject")
-    except jwt.PyJWTError:
+        subject = UUID(payload.get("sub", ""))
+        async with SessionLocal() as session:
+            user = await session.get(User, subject)
+            if user is None or not user.is_active or payload.get("ver") != user.token_version:
+                raise jwt.InvalidTokenError("Invalid user session")
+    except (jwt.PyJWTError, ValueError):
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid token")
         return
 

@@ -66,6 +66,8 @@ class Settings(BaseSettings):
     jwt_access_token_expire_minutes: int = Field(default=60, gt=0)
     api_admin_username: str = "admin"
     api_admin_password: str = Field(repr=False)
+    login_max_failed_attempts: int = Field(default=5, gt=0)
+    login_lock_minutes: int = Field(default=15, gt=0)
 
     camera_read_fps: float = Field(default=10.0, gt=0, le=120)
     camera_frame_width: int = Field(default=1280, gt=0)

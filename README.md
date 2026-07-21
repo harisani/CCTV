@@ -17,6 +17,34 @@ menyalakan API dan dashboard. URL yang tersedia:
 - Health check: `http://localhost:8000/api/v1/health`
 - Dashboard: `http://localhost:5173`
 
+Saat database masih kosong, API membuat akun awal dari `API_ADMIN_USERNAME` dan
+`API_ADMIN_PASSWORD`. Akun ini memiliki role `SUPER_ADMIN`. Nilai password hanya
+digunakan untuk bootstrap pertama; perubahan berikutnya disimpan sebagai hash
+scrypt di PostgreSQL, bukan kembali ke `.env`.
+
+## User Management dan RBAC
+
+Menu **Administrasi** tersedia setelah login. Pembagian akses saat ini:
+
+| Role | Monitoring & histori | Kelola kamera | Kelola pengguna |
+| --- | --- | --- | --- |
+| `SUPER_ADMIN` | Ya | Ya | Ya |
+| `ADMIN` | Ya | Ya | Tidak |
+| `SUPERVISOR` | Ya | Tidak | Tidak |
+| `OPERATOR` | Ya | Tidak | Tidak |
+| `AUDITOR` | Ya | Tidak | Tidak |
+
+Super admin dapat membuat pengguna, mengubah role/status, dan mereset password
+pengguna lain. Password sementara minimal 12 karakter dan wajib diganti oleh
+pengguna. Perubahan role, status, dan password menaikkan `token_version` sehingga
+JWT lama langsung ditolak. Login gagal berulang dikunci sesuai
+`LOGIN_MAX_FAILED_ATTEMPTS` dan `LOGIN_LOCK_MINUTES`.
+
+Setiap perubahan pengguna atau kamera dicatat di tabel `audit_logs`. Tindakan
+DELETE kamera bersifat aman: kamera dinonaktifkan dari runtime, sedangkan
+tracking, event, dan snapshot historis tetap disimpan. Kamera dapat diaktifkan
+kembali dari form **Ubah konfigurasi kamera**.
+
 ## Dashboard multi-kamera
 
 Dashboard mengambil hingga 200 kamera dari API, mengelompokkannya berdasarkan
@@ -40,8 +68,8 @@ Saat membuat kamera, metadata lokasi dapat ikut dikirim:
 }
 ```
 
-Container API otomatis menjalankan migration `0003_camera_dashboard` saat
-startup. Publisher realtime harus mengirim `camera_id` yang sama dengan ID pada
+Container API otomatis menjalankan seluruh migration sampai revision terbaru
+saat startup. Publisher realtime harus mengirim `camera_id` yang sama dengan ID pada
 database ketika memanggil `dashboard_hub.publish_frame(...)`.
 
 `CameraRuntimeManager` aktif secara default. Manager memuat kamera aktif dari
@@ -71,9 +99,9 @@ app/
 ├── api/          HTTP routes, JWT, schema, DI, dan error handler
 ├── config/       Settings Pydantic dari .env
 ├── database/     Engine dan async SQLAlchemy session
-├── models/       Entitas ORM: Camera, Person, Tracking, Event, Snapshot
+├── models/       Entitas ORM termasuk Camera, Person, Event, User, AuditLog
 ├── repository/   Query dan persistensi per entitas
-├── services/     Kamera RTSP, line crossing, dan composition root
+├── services/     Kamera RTSP, user/RBAC, uji koneksi, dan composition root
 ├── detector/     Adapter YOLOv11
 ├── tracker/      Adapter ByteTrack + riwayat centroid
 ├── reid/         OSNet/TorchReID dan pencocokan embedding

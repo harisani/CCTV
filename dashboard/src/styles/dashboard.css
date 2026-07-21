@@ -974,7 +974,8 @@ a,
 }
 
 .snapshot-dialog .MuiDialog-paper,
-.command-dialog .MuiDialog-paper {
+.command-dialog .MuiDialog-paper,
+.admin-dialog .MuiDialog-paper {
   border: var(--rule-thin) solid var(--color-rule-2);
   border-radius: var(--radius-md);
   background: var(--color-paper);
@@ -982,7 +983,8 @@ a,
 }
 
 .command-dialog .MuiBackdrop-root,
-.snapshot-dialog .MuiBackdrop-root {
+.snapshot-dialog .MuiBackdrop-root,
+.admin-dialog .MuiBackdrop-root {
   background: var(--color-overlay);
 }
 
@@ -1093,6 +1095,165 @@ a,
   border-radius: var(--radius-sm);
 }
 
+.view-switch {
+  display: flex;
+  gap: var(--space-2xs);
+}
+
+.view-switch button {
+  display: flex;
+  width: 2.75rem;
+  height: 2.75rem;
+  align-items: center;
+  justify-content: center;
+  border: var(--rule-thin) solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-muted);
+  cursor: pointer;
+}
+
+.view-switch button span {
+  display: none;
+}
+
+.view-switch button[data-active="true"] {
+  border-color: var(--color-rule-2);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+}
+
+.admin-main {
+  min-height: calc(100dvh - 4.5rem);
+}
+
+.admin-intro {
+  padding-block-end: var(--space-lg);
+  border-block-end: var(--rule-thin) solid var(--color-rule);
+}
+
+.admin-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
+.admin-summary span {
+  padding: var(--space-xs) var(--space-sm);
+  border: var(--rule-thin) solid var(--color-rule-2);
+  border-radius: var(--radius-sm);
+  color: var(--color-ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.admin-tabs {
+  min-height: 3rem;
+  margin-block-end: var(--space-xl);
+  border-block-end: var(--rule-thin) solid var(--color-rule);
+}
+
+.admin-tabs .MuiTab-root {
+  min-height: 3rem;
+  color: var(--color-muted);
+  font-weight: 650;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+.admin-tabs .Mui-selected {
+  color: var(--color-accent) !important;
+}
+
+.admin-tabs .MuiTabs-indicator {
+  height: 2px;
+  background: var(--color-accent);
+}
+
+.admin-section {
+  min-width: 0;
+}
+
+.admin-section > .section-heading {
+  margin-block-end: var(--space-md);
+}
+
+.admin-table strong,
+.table-secondary {
+  display: block;
+}
+
+.admin-table strong {
+  color: var(--color-ink);
+}
+
+.table-secondary {
+  margin-block-start: var(--space-2xs);
+  color: var(--color-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2xs);
+}
+
+.row-actions .MuiButton-root {
+  min-height: 2.5rem;
+  white-space: nowrap;
+}
+
+.admin-dialog .MuiDialogTitle-root {
+  color: var(--color-ink);
+  font-family: var(--font-display);
+  font-weight: 700;
+}
+
+.admin-dialog .MuiDialogContent-root {
+  display: grid;
+  gap: var(--space-md);
+}
+
+.dialog-intro {
+  margin: 0;
+  color: var(--color-muted);
+}
+
+.admin-form-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-md);
+  padding-block-start: var(--space-xs);
+}
+
+.connection-test {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm);
+  border: var(--rule-thin) solid var(--color-rule);
+  border-radius: var(--radius-sm);
+  background: var(--color-paper-2);
+}
+
+.connection-test span {
+  color: var(--color-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.connection-test span[data-status="success"] {
+  color: var(--color-success);
+}
+
+.connection-test span[data-status="error"] {
+  color: var(--color-error);
+}
+
 @media (hover: hover) and (pointer: fine) {
   .search-trigger:hover,
   .icon-action:hover,
@@ -1106,6 +1267,11 @@ a,
 
   .command-item:hover {
     background: var(--color-accent-soft);
+  }
+
+  .view-switch button:hover {
+    background: var(--color-paper-3);
+    color: var(--color-ink);
   }
 }
 
@@ -1199,9 +1365,28 @@ a,
   .login-context {
     display: grid;
   }
+
+  .admin-form-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-form-grid__wide {
+    grid-column: 1 / -1;
+  }
 }
 
 @media (min-width: 60rem) {
+  .view-switch button {
+    width: auto;
+    gap: var(--space-xs);
+    padding-inline: var(--space-sm);
+  }
+
+  .view-switch button span {
+    display: inline;
+    white-space: nowrap;
+  }
+
   .metric-strip {
     grid-template-columns: repeat(6, minmax(0, 1fr));
   }

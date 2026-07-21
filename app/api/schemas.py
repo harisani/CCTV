@@ -2,7 +2,9 @@ from datetime import datetime
 from typing import Generic, TypeVar
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+from urllib.parse import urlparse
+from app.models import UserRole
 
 T = TypeVar("T")
 
@@ -19,6 +21,42 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
 
 
+class UserCreate(BaseModel):
+    username: str = Field(min_length=3, max_length=80, pattern=r"^[a-zA-Z0-9._-]+$")
+    full_name: str = Field(min_length=2, max_length=150)
+    password: str = Field(min_length=12, max_length=256)
+    role: UserRole
+    is_active: bool = True
+
+
+class UserUpdate(BaseModel):
+    full_name: str | None = Field(default=None, min_length=2, max_length=150)
+    role: UserRole | None = None
+    is_active: bool | None = None
+
+
+class PasswordReset(BaseModel):
+    password: str = Field(min_length=12, max_length=256)
+
+
+class PasswordChange(BaseModel):
+    current_password: str = Field(min_length=1, max_length=256)
+    new_password: str = Field(min_length=12, max_length=256)
+
+
+class UserResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    username: str
+    full_name: str
+    role: UserRole
+    is_active: bool
+    must_change_password: bool
+    last_login_at: datetime | None
+    created_at: datetime
+
+
 class CameraCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     rtsp_url: str = Field(min_length=1)
@@ -28,6 +66,47 @@ class CameraCreate(BaseModel):
     floor: str | None = Field(default=None, max_length=50)
     zone: str | None = Field(default=None, max_length=100)
     display_order: int = Field(default=0, ge=0)
+
+    @field_validator("rtsp_url")
+    @classmethod
+    def validate_video_url(cls, value: str) -> str:
+        parsed = urlparse(value.strip())
+        if parsed.scheme.lower() not in {"rtsp", "rtsps", "http", "https"} or not parsed.hostname:
+            raise ValueError("Camera URL must use rtsp, rtsps, http, or https and include a host")
+        return value.strip()
+
+
+class CameraUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    rtsp_url: str | None = Field(default=None, min_length=1)
+    enabled: bool | None = None
+    location: str | None = Field(default=None, max_length=150)
+    building: str | None = Field(default=None, max_length=100)
+    floor: str | None = Field(default=None, max_length=50)
+    zone: str | None = Field(default=None, max_length=100)
+    display_order: int | None = Field(default=None, ge=0)
+
+    @field_validator("rtsp_url")
+    @classmethod
+    def validate_video_url(cls, value: str | None) -> str | None:
+        return CameraCreate.validate_video_url(value) if value is not None else None
+
+
+class CameraConnectionTest(BaseModel):
+    rtsp_url: str = Field(min_length=1)
+
+    @field_validator("rtsp_url")
+    @classmethod
+    def validate_video_url(cls, value: str) -> str:
+        return CameraCreate.validate_video_url(value)
+
+
+class CameraConnectionResult(BaseModel):
+    connected: bool
+    latency_ms: int
+    width: int | None = None
+    height: int | None = None
+    detail: str
 
 
 class CameraResponse(BaseModel):

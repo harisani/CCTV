@@ -13,6 +13,7 @@ from app.repository import CameraRuntimeRepository
 from app.services.camera_runtime_manager import CameraRuntimeManager
 from app.utils.logging import configure_logging
 from app.utils.runtime import configure_compute_runtime
+from app.services.user_service import ensure_bootstrap_admin
 
 
 @asynccontextmanager
@@ -21,6 +22,7 @@ async def lifespan(_: FastAPI):
     settings = get_settings()
     configure_logging(settings.log_level)
     configure_compute_runtime(settings)
+    await ensure_bootstrap_admin(SessionLocal, settings)
     camera_runtime: CameraRuntimeManager | None = None
     if settings.enable_camera_runtime:
         camera_runtime = CameraRuntimeManager(
@@ -46,7 +48,7 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=settings.cors_origins,
         allow_credentials=True,
-        allow_methods=["GET", "POST", "DELETE"],
+        allow_methods=["GET", "POST", "PATCH", "DELETE"],
         allow_headers=["Authorization", "Content-Type"],
     )
     register_exception_handlers(application)

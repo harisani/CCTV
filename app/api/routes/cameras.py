@@ -4,10 +4,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.exc import IntegrityError
 
 from app.api.dependencies import get_camera_repository
-from app.api.schemas import CameraCreate, CameraResponse, Page
-from app.api.security import require_authenticated_user
-from app.models import Camera
-from app.repository import CameraRepository
+from app.api.schemas import CameraConnectionResult, CameraConnectionTest, CameraCreate, CameraResponse, CameraUpdate, Page
+from app.api.security import require_authenticated_user, require_roles
+from app.models import Camera, User, UserRole
+from app.repository import AuditRepository, CameraRepository
+from app.services.camera_connection_tester import CameraConnectionTester
 
 router = APIRouter(prefix="/camera", dependencies=[Depends(require_authenticated_user)])
 
@@ -39,13 +40,22 @@ async def list_cameras(
 
 @router.post("", response_model=CameraResponse, status_code=status.HTTP_201_CREATED)
 async def create_camera(
-    payload: CameraCreate, repository: CameraRepository = Depends(get_camera_repository)
+    payload: CameraCreate,
+    actor: User = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)),
+    repository: CameraRepository = Depends(get_camera_repository),
 ) -> Camera:
     if await repository.get_by_name(payload.name):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Camera name already exists")
     camera = Camera(**payload.model_dump())
     try:
         await repository.add(camera)
+        await AuditRepository(repository.session).record(
+            actor_user_id=actor.id,
+            action="CAMERA_CREATED",
+            resource_type="camera",
+            resource_id=str(camera.id),
+            details={"name": camera.name},
+        )
         await repository.session.commit()
     except IntegrityError as error:
         await repository.session.rollback()
@@ -53,24 +63,82 @@ async def create_camera(
     return camera
 
 
-async def _delete_camera(camera_id: UUID, repository: CameraRepository) -> Response:
+async def _delete_camera(camera_id: UUID, repository: CameraRepository, actor: User) -> Response:
     camera = await repository.get(camera_id)
     if camera is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Camera not found")
-    await repository.session.delete(camera)
+    await AuditRepository(repository.session).record(
+        actor_user_id=actor.id,
+        action="CAMERA_ARCHIVED",
+        resource_type="camera",
+        resource_id=str(camera.id),
+        details={"name": camera.name},
+    )
+    # Camera history is evidence and must not disappear with an operational action.
+    # DELETE therefore removes the source from realtime processing without cascading
+    # into Tracking/Event/Snapshot records. An administrator can enable it again.
+    camera.enabled = False
+    camera.status = "OFFLINE"
+    camera.worker_id = None
     await repository.session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.delete("", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_camera(
-    camera_id: UUID = Query(), repository: CameraRepository = Depends(get_camera_repository)
+    camera_id: UUID = Query(),
+    actor: User = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)),
+    repository: CameraRepository = Depends(get_camera_repository),
 ) -> Response:
-    return await _delete_camera(camera_id, repository)
+    return await _delete_camera(camera_id, repository, actor)
 
 
 @router.delete("/{camera_id}", status_code=status.HTTP_204_NO_CONTENT, include_in_schema=False)
 async def delete_camera_by_path(
-    camera_id: UUID, repository: CameraRepository = Depends(get_camera_repository)
+    camera_id: UUID,
+    actor: User = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)),
+    repository: CameraRepository = Depends(get_camera_repository),
 ) -> Response:
-    return await _delete_camera(camera_id, repository)
+    return await _delete_camera(camera_id, repository, actor)
+
+
+@router.patch("/{camera_id}", response_model=CameraResponse)
+async def update_camera(
+    camera_id: UUID,
+    payload: CameraUpdate,
+    actor: User = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)),
+    repository: CameraRepository = Depends(get_camera_repository),
+) -> Camera:
+    camera = await repository.get(camera_id)
+    if camera is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Camera not found")
+    changes = payload.model_dump(exclude_unset=True)
+    if "name" in changes and changes["name"] != camera.name and await repository.get_by_name(changes["name"]):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Camera name already exists")
+    for field, value in changes.items():
+        setattr(camera, field, value.strip() if isinstance(value, str) else value)
+    await AuditRepository(repository.session).record(
+        actor_user_id=actor.id,
+        action="CAMERA_UPDATED",
+        resource_type="camera",
+        resource_id=str(camera.id),
+        details={"fields": sorted(changes)},
+    )
+    await repository.session.commit()
+    await repository.session.refresh(camera)
+    return camera
+
+
+@router.post("/test-connection", response_model=CameraConnectionResult)
+async def test_camera_connection(
+    payload: CameraConnectionTest,
+    _: User = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)),
+) -> CameraConnectionResult:
+    result = await CameraConnectionTester().test(payload.rtsp_url)
+    return CameraConnectionResult(
+        connected=result.connected,
+        latency_ms=result.latency_ms,
+        width=result.width,
+        height=result.height,
+        detail=result.detail,
+    )

@@ -3,6 +3,7 @@ import {
   Alert,
   Button,
   Dialog,
+  DialogActions,
   DialogContent,
   DialogTitle,
   IconButton,
@@ -14,8 +15,11 @@ import {
 import CloseIcon from '@mui/icons-material/Close'
 import LogoutIcon from '@mui/icons-material/Logout'
 import SearchIcon from '@mui/icons-material/Search'
+import DashboardOutlinedIcon from '@mui/icons-material/DashboardOutlined'
+import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined'
 import CameraSidebar from './components/CameraSidebar'
 import LiveGrid from './components/LiveGrid'
+import Administration from './components/Administration'
 import { API_BASE, api, login } from './api'
 import { useDashboardSocket } from './useDashboardSocket'
 
@@ -84,6 +88,40 @@ function Login({ onLogin }) {
       </form>
     </section>
   </main>
+}
+
+function PasswordChangeDialog({ open, token, onChanged }) {
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+  const submit = async event => {
+    event.preventDefault()
+    setLoading(true)
+    setError('')
+    try {
+      const result = await api('/auth/change-password', token, {
+        method: 'POST', body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+      })
+      onChanged(result.access_token)
+      setCurrentPassword('')
+      setNewPassword('')
+    } catch (err) { setError(err.message) } finally { setLoading(false) }
+  }
+  return <Dialog className="admin-dialog" open={open} disableEscapeKeyDown fullWidth maxWidth="xs">
+    <form onSubmit={submit}>
+      <DialogTitle>Ganti password sementara</DialogTitle>
+      <DialogContent>
+        <p className="dialog-intro">Sebelum melanjutkan, buat password pribadi minimal 12 karakter.</p>
+        {error && <Alert severity="error">{error}</Alert>}
+        <Stack spacing={2}>
+          <TextField className="light-field" type="password" label="Password sementara" value={currentPassword} onChange={event => setCurrentPassword(event.target.value)} required />
+          <TextField className="light-field" type="password" label="Password baru" value={newPassword} onChange={event => setNewPassword(event.target.value)} helperText="Minimal 12 karakter" required />
+        </Stack>
+      </DialogContent>
+      <DialogActions><Button type="submit" variant="contained" disabled={loading}>{loading ? 'Mengganti…' : 'Ganti password'}</Button></DialogActions>
+    </form>
+  </Dialog>
 }
 
 function Metric({ label, value, tone = 'neutral' }) {
@@ -282,6 +320,8 @@ function App() {
   const [commandOpen, setCommandOpen] = useState(false)
   const [commandQuery, setCommandQuery] = useState('')
   const [commandIndex, setCommandIndex] = useState(0)
+  const [currentUser, setCurrentUser] = useState(null)
+  const [page, setPage] = useState('monitoring')
   const initializedSelection = useRef(false)
 
   const loadCameras = useCallback(async () => {
@@ -313,7 +353,7 @@ function App() {
 
   useEffect(() => {
     if (!token) return undefined
-    Promise.all([loadCameras(), loadDashboard()]).catch(err => setError(err.message))
+    Promise.all([loadCameras(), loadDashboard(), api('/auth/me', token).then(setCurrentUser)]).catch(err => setError(err.message))
     const refresh = window.setInterval(
       () => Promise.all([loadCameras(), loadDashboard()]).catch(err => setError(err.message)),
       30000,
@@ -390,7 +430,11 @@ function App() {
     setToken('')
     setCameras([])
     setSelectedIds([])
+    setCurrentUser(null)
+    setPage('monitoring')
   }
+
+  const canAdminister = ['SUPER_ADMIN', 'ADMIN'].includes(currentUser?.role)
 
   const commandItems = useMemo(() => {
     const normalized = commandQuery.trim().toLowerCase()
@@ -459,6 +503,10 @@ function App() {
           <kbd>⌘ K</kbd>
         </button>
         <div className="control-nav__actions">
+          {canAdminister && <div className="view-switch" aria-label="Navigasi utama">
+            <button type="button" data-active={page === 'monitoring'} onClick={() => setPage('monitoring')} aria-label="Buka monitoring"><DashboardOutlinedIcon fontSize="small" /><span>Monitoring</span></button>
+            <button type="button" data-active={page === 'administration'} onClick={() => setPage('administration')} aria-label="Buka administrasi"><SettingsOutlinedIcon fontSize="small" /><span>Administrasi</span></button>
+          </div>}
           <span className="connection-pill">
             <span className="status-dot" data-status={socketStatus} />
             {socketStatus === 'connected' ? 'Realtime aktif' : socketStatus}
@@ -468,7 +516,9 @@ function App() {
       </div>
     </header>
 
-    <main className="dashboard-main">
+    {page === 'administration' && canAdminister
+      ? <Administration token={token} currentUser={currentUser} cameras={camerasWithStatus} onReloadCameras={loadCameras} />
+      : <main className="dashboard-main">
       {error && <Alert className="error-banner" severity="error" onClose={() => setError('')}>{error}</Alert>}
 
       <section className="dashboard-intro" aria-labelledby="dashboard-title">
@@ -524,7 +574,7 @@ function App() {
         <span>People Flow Control · CCTV Operations</span>
         <span className="tnum">{onlineCount}/{cameras.length} kamera online · {socketStatus}</span>
       </footer>
-    </main>
+      </main>}
 
     <CommandPalette
       open={commandOpen}
@@ -544,6 +594,15 @@ function App() {
       </DialogTitle>
       <DialogContent>{snapshot && <img className="snapshot-image" src={snapshot} alt="Snapshot event CCTV" />}</DialogContent>
     </Dialog>
+    <PasswordChangeDialog
+      open={Boolean(currentUser?.must_change_password)}
+      token={token}
+      onChanged={value => {
+        localStorage.setItem('cctv-token', value)
+        setToken(value)
+        api('/auth/me', value).then(setCurrentUser).catch(err => setError(err.message))
+      }}
+    />
   </div>
 }
 
