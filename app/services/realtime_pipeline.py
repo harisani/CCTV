@@ -24,7 +24,7 @@ class PipelineFrame:
     processed: bool
     tracks: list[dict[str, Any]]
     events: list[dict[str, Any]]
-    occupancy: int | None = None
+    occupancy: dict[str, int] | None = None
 
 
 @dataclass(slots=True)
@@ -74,7 +74,11 @@ class CameraRealtimePipeline:
         self._logger = logging.getLogger(f"{__name__}.{camera_id}")
 
     async def start(self) -> None:
-        """Close rows left active by an unclean previous worker shutdown."""
+        """Recover safely: stale tracks close while open presence becomes uncertain."""
+        await self._persistence.mark_camera_presence_uncertain(
+            self.camera_id,
+            occurred_at=datetime.now(UTC),
+        )
         await self._persistence.close_camera_trackings(self.camera_id)
 
     async def stop(self) -> None:
@@ -87,6 +91,13 @@ class CameraRealtimePipeline:
         self._embedding_ids.clear()
         self._last_seen_frame.clear()
 
+    async def mark_camera_uncertain(self, occurred_at: datetime | None = None) -> dict[str, int]:
+        """Move camera-lost sessions out of current occupancy into uncertain presence."""
+        return await self._persistence.mark_camera_presence_uncertain(
+            self.camera_id,
+            occurred_at=occurred_at or datetime.now(UTC),
+        )
+
     def configure_crossing(self, config: dict[str, Any] | None) -> None:
         """Replace crossing geometry while preserving detector and model instances."""
         if config is None:
@@ -96,6 +107,8 @@ class CameraRealtimePipeline:
                 VirtualLineConfig.from_mapping(
                     config,
                     max_inactive_frames=self._settings.crossing_max_inactive_frames,
+                    hysteresis_ratio=self._settings.crossing_hysteresis_ratio,
+                    event_cooldown_frames=self._settings.crossing_event_cooldown_frames,
                 )
             )
         self._crossing.reset()
@@ -174,6 +187,17 @@ class CameraRealtimePipeline:
                 )
                 continue
             self._database_tracks[track.tracking_id] = database_id
+            try:
+                await self._persistence.confirm_person_presence(
+                    person_id,
+                    camera_id=self.camera_id,
+                    confirmed_at=captured_at,
+                )
+            except Exception:
+                self._logger.exception(
+                    "Unable to confirm presence byte_track_id=%s",
+                    track.tracking_id,
+                )
             embedding_id = self._embedding_ids.get(track.tracking_id)
             if embedding_id is not None:
                 try:
@@ -318,10 +342,19 @@ class CameraRealtimePipeline:
                 self._logger.critical("Event retry queue is full; preserving snapshot files")
             return None
         if not created:
-            self._logger.info(
-                "Event already persisted event_id=%s; retaining snapshot for safety",
-                pending.crossing.event_id,
-            )
+            if payload.get("discard_snapshot"):
+                self._persistence.remove_snapshot(pending.snapshot)
+                self._logger.info(
+                    "Rejected crossing discarded event_id=%s reason=%s",
+                    pending.crossing.event_id,
+                    payload.get("reason"),
+                )
+            else:
+                self._logger.info(
+                    "Event not created event_id=%s reason=%s; retaining snapshot for safety",
+                    pending.crossing.event_id,
+                    payload.get("reason"),
+                )
             return None
         payload["snapshot_url"] = self._snapshot_url(pending.snapshot)
         return payload

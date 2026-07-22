@@ -18,12 +18,15 @@ from app.services.backup_scheduler import BackupScheduler
 from app.services.disaster_recovery_scheduler import DisasterRecoveryScheduler
 from app.services.realtime_pipeline import RealtimePipelineFactory
 from app.services.reid_retention_service import ReIdRetentionService
+from app.services.presence_reconciliation_scheduler import PresenceReconciliationScheduler
+from app.services.container import get_service_container
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     """Set up and release process-wide resources for the HTTP application."""
     settings = get_settings()
+    services = get_service_container()
     configure_logging(settings.log_level)
     configure_compute_runtime(settings)
     await ensure_bootstrap_admin(SessionLocal, settings)
@@ -31,6 +34,7 @@ async def lifespan(_: FastAPI):
     backup_scheduler: BackupScheduler | None = None
     dr_scheduler: DisasterRecoveryScheduler | None = None
     reid_retention: ReIdRetentionService | None = None
+    presence_reconciliation: PresenceReconciliationScheduler | None = None
     if settings.enable_backup_scheduler:
         backup_scheduler = BackupScheduler(settings, SessionLocal)
         await backup_scheduler.start()
@@ -40,6 +44,12 @@ async def lifespan(_: FastAPI):
     if settings.enable_reid_retention:
         reid_retention = ReIdRetentionService(settings, SessionLocal)
         await reid_retention.start()
+    presence_reconciliation = PresenceReconciliationScheduler(
+        settings,
+        SessionLocal,
+        dashboard_hub,
+    )
+    await presence_reconciliation.start()
     if settings.enable_camera_runtime:
         pipeline_factory = (
             RealtimePipelineFactory(settings, SessionLocal)
@@ -51,11 +61,14 @@ async def lifespan(_: FastAPI):
             CameraRuntimeRepository(SessionLocal),
             dashboard_hub,
             pipeline_factory=pipeline_factory.create if pipeline_factory else None,
+            live_visibility=services.live_visibility,
         )
         await camera_runtime.start()
     try:
         yield
     finally:
+        if presence_reconciliation is not None:
+            await presence_reconciliation.stop()
         if backup_scheduler is not None:
             await backup_scheduler.stop()
         if dr_scheduler is not None:
@@ -76,7 +89,7 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=settings.cors_origins,
         allow_credentials=True,
-        allow_methods=["GET", "POST", "PATCH", "DELETE"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
         allow_headers=["Authorization", "Content-Type"],
     )
     register_exception_handlers(application)

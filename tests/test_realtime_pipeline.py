@@ -102,13 +102,20 @@ class FakeSnapshots:
 
 
 class FakePersistence:
-    def __init__(self, person_id: UUID, *, fail_event_once: bool = False) -> None:
+    def __init__(
+        self,
+        person_id: UUID,
+        *,
+        fail_event_once: bool = False,
+        reject_event: bool = False,
+    ) -> None:
         self.person_id = person_id
         self.database_tracking_id = uuid4()
         self.started = 0
         self.persisted = 0
         self.closed = 0
         self.fail_event_once = fail_event_once
+        self.reject_event = reject_event
 
     async def close_camera_trackings(self, _camera_id: UUID) -> None:
         pass
@@ -123,6 +130,12 @@ class FakePersistence:
         self.started += 1
         return self.database_tracking_id
 
+    async def confirm_person_presence(self, *_args: object, **_fields: object) -> None:
+        pass
+
+    async def mark_camera_presence_uncertain(self, *_args: object, **_fields: object) -> dict[str, int]:
+        return {"confirmed": 0, "uncertain": 1, "total": 0}
+
     async def update_trackings(self, _updates: object) -> None:
         pass
 
@@ -130,6 +143,8 @@ class FakePersistence:
         if self.fail_event_once:
             self.fail_event_once = False
             raise RuntimeError("temporary database outage")
+        if self.reject_event:
+            return False, {"reason": "orphan_exit", "discard_snapshot": True}
         self.persisted += 1
         crossing = fields["crossing"]
         return True, {
@@ -137,24 +152,35 @@ class FakePersistence:
             "event_type": crossing.event_type.value,
         }
 
-    async def current_occupancy(self) -> int:
-        return 1
+    async def current_occupancy(self) -> dict[str, int]:
+        return {"confirmed": 1, "uncertain": 0, "total": 1}
 
     async def close_trackings(self, tracking_ids: list[UUID], **_fields: object) -> None:
         self.closed += len(tracking_ids)
 
     @staticmethod
-    def remove_snapshot(_snapshot: object) -> None:
-        pass
+    def remove_snapshot(snapshot: SnapshotResult | None) -> None:
+        if snapshot is None:
+            return
+        snapshot.image_path.unlink(missing_ok=True)
+        snapshot.metadata_path.unlink(missing_ok=True)
 
 
 class RealtimePipelineTest(unittest.IsolatedAsyncioTestCase):
     async def _pipeline(
-        self, root: Path, *, fail_event_once: bool = False
+        self,
+        root: Path,
+        *,
+        fail_event_once: bool = False,
+        reject_event: bool = False,
     ) -> tuple[CameraRealtimePipeline, FakePersistence, FakeTracker]:
         settings = PipelineSettings()
         settings.storage_path = str(root)
-        persistence = FakePersistence(uuid4(), fail_event_once=fail_event_once)
+        persistence = FakePersistence(
+            uuid4(),
+            fail_event_once=fail_event_once,
+            reject_event=reject_event,
+        )
         tracker = FakeTracker()
         pipeline = CameraRealtimePipeline(
             camera_id=uuid4(),
@@ -181,7 +207,7 @@ class RealtimePipelineTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(persistence.started, 1)
             self.assertEqual(second.tracks[0]["tracking_id"], 7)
             self.assertEqual(second.events[0]["event_type"], "ENTER")
-            self.assertEqual(second.occupancy, 1)
+            self.assertEqual(second.occupancy["total"], 1)
             self.assertEqual(persistence.persisted, 1)
             self.assertTrue((Path(directory) / "event.jpg").is_file())
 
@@ -203,6 +229,20 @@ class RealtimePipelineTest(unittest.IsolatedAsyncioTestCase):
             retried = await pipeline.process(SimpleNamespace())
             self.assertEqual(retried.events[0]["event_type"], "ENTER")
             self.assertEqual(persistence.persisted, 1)
+
+    async def test_rejected_crossing_removes_unpersisted_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            pipeline, persistence, _tracker = await self._pipeline(
+                Path(directory), reject_event=True
+            )
+            await pipeline.process(SimpleNamespace())
+            await asyncio.sleep(0.02)
+            result = await pipeline.process(SimpleNamespace())
+
+            self.assertEqual(result.events, [])
+            self.assertEqual(persistence.persisted, 0)
+            self.assertFalse((Path(directory) / "event.jpg").exists())
+            self.assertFalse((Path(directory) / "event.json").exists())
 
 
 if __name__ == "__main__":

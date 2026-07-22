@@ -21,6 +21,15 @@ class DisconnectedWebSocket(FakeWebSocket):
 
 
 class DashboardHubTest(unittest.IsolatedAsyncioTestCase):
+    async def test_new_dashboard_receives_latest_visible_count(self) -> None:
+        hub = DashboardHub()
+        await hub.publish_occupancy({"total": 3})
+        websocket = FakeWebSocket()
+
+        await hub.connect(websocket)
+
+        self.assertEqual(websocket.messages[0], {"type": "occupancy", "count": 3, "total": 3})
+
     async def test_disconnect_during_handshake_is_not_registered(self) -> None:
         hub = DashboardHub()
         websocket = DisconnectedWebSocket()

@@ -1,8 +1,10 @@
+import asyncio
 import unittest
 
 from pydantic import ValidationError
 
 from app.api.schemas import CameraCrossingConfig
+from app.app import create_app
 from app.services.crossing_service import CrossingService, CrossingType, VirtualLineConfig
 from app.tracker import TrackedDetection
 
@@ -21,6 +23,55 @@ def track(track_id: int, x: float, y: float) -> TrackedDetection:
 
 
 class CameraCrossingConfigTest(unittest.TestCase):
+    def test_browser_preflight_allows_crossing_config_put(self) -> None:
+        async def preflight() -> list[dict]:
+            messages: list[dict] = []
+            request_sent = False
+
+            async def receive() -> dict:
+                nonlocal request_sent
+                if request_sent:
+                    return {"type": "http.disconnect"}
+                request_sent = True
+                return {"type": "http.request", "body": b"", "more_body": False}
+
+            async def send(message: dict) -> None:
+                messages.append(message)
+
+            await create_app()(
+                {
+                    "type": "http",
+                    "asgi": {"version": "3.0"},
+                    "http_version": "1.1",
+                    "method": "OPTIONS",
+                    "scheme": "http",
+                    "path": "/api/v1/camera/00000000-0000-0000-0000-000000000000/crossing-config",
+                    "raw_path": b"/api/v1/camera/00000000-0000-0000-0000-000000000000/crossing-config",
+                    "query_string": b"",
+                    "headers": [
+                        (b"origin", b"http://localhost:5173"),
+                        (b"access-control-request-method", b"PUT"),
+                        (b"access-control-request-headers", b"authorization,content-type"),
+                    ],
+                    "client": ("127.0.0.1", 12345),
+                    "server": ("testserver", 80),
+                    "root_path": "",
+                },
+                receive,
+                send,
+            )
+            return messages
+
+        response_start = next(
+            message for message in asyncio.run(preflight()) if message["type"] == "http.response.start"
+        )
+        response_headers = {
+            key.decode("latin-1"): value.decode("latin-1") for key, value in response_start["headers"]
+        }
+
+        self.assertEqual(response_start["status"], 200)
+        self.assertIn("PUT", response_headers["access-control-allow-methods"])
+
     def test_normalized_horizontal_line_scales_to_current_frame(self) -> None:
         config = VirtualLineConfig.from_mapping(
             {

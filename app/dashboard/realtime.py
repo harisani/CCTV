@@ -17,11 +17,15 @@ class DashboardHub:
 
     def __init__(self) -> None:
         self._connections: dict[WebSocket, set[str]] = {}
+        self._latest_occupancy: dict[str, int] = {"total": 0}
         self._logger = logging.getLogger(__name__)
 
     async def connect(self, websocket: WebSocket) -> bool:
         try:
             await websocket.accept()
+            await websocket.send_json(
+                {"type": "occupancy", "count": self._latest_occupancy["total"], **self._latest_occupancy}
+            )
         except RuntimeError:
             self._logger.info("Dashboard disconnected before WebSocket handshake completed")
             return False
@@ -85,8 +89,33 @@ class DashboardHub:
     async def publish_event(self, payload: dict[str, Any]) -> None:
         await self.publish({"type": "event", "payload": payload})
 
-    async def publish_occupancy(self, count: int) -> None:
-        await self.publish({"type": "occupancy", "count": count})
+    async def publish_occupancy(self, occupancy: dict[str, int]) -> None:
+        self._latest_occupancy = {"total": occupancy["total"]}
+        await self.publish(
+            {
+                "type": "occupancy",
+                "count": self._latest_occupancy["total"],
+                **self._latest_occupancy,
+            }
+        )
+
+    async def publish_camera_status(
+        self,
+        *,
+        camera_id: str,
+        status: str,
+        last_frame_at: str | None,
+        last_error: str | None,
+    ) -> None:
+        await self.publish(
+            {
+                "type": "camera_status",
+                "camera_id": camera_id,
+                "status": status,
+                "last_frame_at": last_frame_at,
+                "last_error": last_error,
+            }
+        )
 
 
 dashboard_hub = DashboardHub()

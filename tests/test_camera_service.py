@@ -75,6 +75,29 @@ class CameraServiceTest(unittest.TestCase):
         self.assertIsNotNone(service.get_frame())
         service.disconnect()
 
+    def test_drains_source_faster_than_published_frame_rate(self) -> None:
+        captures: list[FakeCapture] = []
+
+        def factory(url: str) -> FakeCapture:
+            capture = FakeCapture(url)
+            captures.append(capture)
+            return capture
+
+        service = CameraService(
+            "low-latency-camera",
+            "rtsp://example.invalid/live",
+            target_fps=5,
+            capture_factory=factory,
+        )
+        self.assertTrue(service.connect())
+        time.sleep(0.03)
+        published_frames, latest = service.get_frame_snapshot()
+        service.disconnect()
+
+        self.assertEqual(published_frames, 1)
+        self.assertIsNotNone(latest)
+        self.assertGreater(captures[0].frame_number, published_frames)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -160,7 +160,14 @@ class CameraService:
         return self.connect()
 
     def _read_loop(self) -> None:
+        """Continuously drain RTSP packets while exposing frames at target FPS.
+
+        Sleeping between ``read`` calls lets FFmpeg's internal RTSP queue grow
+        whenever the source FPS is higher than ``target_fps``. Keep consuming
+        the source instead and throttle only writes to the latest-frame slot.
+        """
         interval = 1 / self.target_fps
+        next_publish_at = 0.0
         while not self._stop_event.is_set():
             started_at = time.monotonic()
             with self._capture_lock:
@@ -180,15 +187,24 @@ class CameraService:
                 self._wait_before_reconnect()
                 continue
 
-            with self._frame_lock:
-                self._latest_frame = frame
-                self._frame_number += 1
-            elapsed = time.monotonic() - started_at
-            self._stop_event.wait(max(0.0, interval - elapsed))
+            now = time.monotonic()
+            if now >= next_publish_at:
+                with self._frame_lock:
+                    self._latest_frame = frame
+                    self._frame_number += 1
+                next_publish_at = now + interval
+
+            # A real stream normally blocks until another packet arrives. Test
+            # doubles and buffered streams can return immediately, so yield just
+            # enough to avoid a CPU spin without allowing stale frames to pile up.
+            if now - started_at < 0.001:
+                self._stop_event.wait(0.001)
 
     def _wait_before_reconnect(self) -> None:
         with self._capture_lock:
             self._release_capture_locked()
+        with self._frame_lock:
+            self._latest_frame = None
         if self._stop_event.wait(self.reconnect_delay_seconds):
             return
         self.connect()

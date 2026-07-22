@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Callable
 from uuid import UUID
 
 from app.services.camera_service import CameraService
+from app.services.live_visibility_service import LiveVisibilityService
 
 if TYPE_CHECKING:
     from app.services.realtime_pipeline import CameraRealtimePipeline, PipelineFrame
@@ -33,6 +34,8 @@ class _CameraRuntime:
     last_tracks: list[dict[str, Any]] | None = None
     last_published_frame: int = 0
     last_publish_at: float = 0.0
+    last_source_frame: int = -1
+    last_source_frame_at: float = 0.0
     last_health_at: float = 0.0
     reported_status: str | None = None
     connect_task: asyncio.Task[bool] | None = None
@@ -57,6 +60,7 @@ class CameraRuntimeManager:
         camera_factory: CameraFactory | None = None,
         jpeg_encoder: JpegEncoder | None = None,
         pipeline_factory: PipelineFactory | None = None,
+        live_visibility: LiveVisibilityService | None = None,
     ) -> None:
         self._settings = settings
         self._catalog = catalog
@@ -64,6 +68,7 @@ class CameraRuntimeManager:
         self._camera_factory = camera_factory or self._create_camera
         self._jpeg_encoder = jpeg_encoder or self._encode_jpeg
         self._pipeline_factory = pipeline_factory
+        self._live_visibility = live_visibility or LiveVisibilityService()
         self._runtimes: dict[UUID, _CameraRuntime] = {}
         self._task: asyncio.Task[None] | None = None
         self._stop_event = asyncio.Event()
@@ -97,6 +102,8 @@ class CameraRuntimeManager:
             *(asyncio.to_thread(runtime.service.disconnect) for runtime in self._runtimes.values()),
             return_exceptions=True,
         )
+        await self._live_visibility.clear()
+        await self._dashboard_hub.publish_occupancy({"total": 0})
         self._runtimes.clear()
         self._logger.info("Camera runtime manager stopped")
 
@@ -129,6 +136,7 @@ class CameraRuntimeManager:
                     await runtime.pipeline.stop()
                 await asyncio.to_thread(runtime.service.disconnect)
                 self._runtimes.pop(camera_id, None)
+                await self._clear_visible_camera(camera_id)
                 await self._report_health(runtime, "OFFLINE", None, None, force=True)
 
         for camera_id, camera in definitions.items():
@@ -206,8 +214,28 @@ class CameraRuntimeManager:
             frame_number, frame = runtime.service.get_frame_snapshot(copy=True)
             now = time.monotonic()
             if frame is None:
-                status = "RECONNECTING" if runtime.service.is_connected() else "OFFLINE"
-                await self._report_health(runtime, status, None, None)
+                await self._report_health(
+                    runtime,
+                    "OFFLINE",
+                    None,
+                    "Tidak ada frame dari kamera; koneksi ulang sedang dicoba",
+                )
+                return
+
+            if frame_number != runtime.last_source_frame:
+                runtime.last_source_frame = frame_number
+                runtime.last_source_frame_at = now
+            elif (
+                runtime.last_source_frame_at > 0
+                and now - runtime.last_source_frame_at
+                >= self._settings.camera_stale_timeout_seconds
+            ):
+                await self._report_health(
+                    runtime,
+                    "OFFLINE",
+                    None,
+                    "Frame kamera berhenti; koneksi ulang sedang dicoba",
+                )
                 return
 
             captured_at = datetime.now(UTC)
@@ -223,15 +251,18 @@ class CameraRuntimeManager:
                     )
                     runtime.last_ai_frame = frame_number
                     runtime.last_tracks = pipeline_result.tracks
+                    if pipeline_result.processed:
+                        visible_count, changed = await self._live_visibility.update(
+                            runtime.camera_id,
+                            pipeline_result.tracks,
+                        )
+                        if changed:
+                            await self._dashboard_hub.publish_occupancy({"total": visible_count})
                     for payload in pipeline_result.events:
                         payload["camera_id"] = str(runtime.camera_id)
                         payload["camera_name"] = runtime.name
                         payload["camera_location"] = runtime.location
                         await self._dashboard_hub.publish_event(payload)
-                    if pipeline_result.occupancy is not None:
-                        await self._dashboard_hub.publish_occupancy(
-                            pipeline_result.occupancy
-                        )
                 except Exception:
                     self._logger.exception(
                         "AI pipeline failed camera_id=%s", runtime.camera_id
@@ -272,6 +303,7 @@ class CameraRuntimeManager:
         if not force and runtime.reported_status == status and not (status == "ONLINE" and periodic_update_due):
             return
         try:
+            previous_status = runtime.reported_status
             await self._catalog.update_health(
                 runtime.camera_id,
                 status=status,
@@ -280,8 +312,27 @@ class CameraRuntimeManager:
             )
             runtime.reported_status = status
             runtime.last_health_at = now
+            if (
+                previous_status == "ONLINE"
+                and status != "ONLINE"
+                and runtime.pipeline is not None
+            ):
+                await runtime.pipeline.mark_camera_uncertain(datetime.now(UTC))
+            if status != "ONLINE":
+                await self._clear_visible_camera(runtime.camera_id)
+            await self._dashboard_hub.publish_camera_status(
+                camera_id=str(runtime.camera_id),
+                status=status,
+                last_frame_at=last_frame_at.isoformat() if last_frame_at else None,
+                last_error=last_error,
+            )
         except Exception:
             self._logger.exception("Unable to persist camera health camera_id=%s", runtime.camera_id)
+
+    async def _clear_visible_camera(self, camera_id: UUID) -> None:
+        visible_count, changed = await self._live_visibility.clear_camera(camera_id)
+        if changed:
+            await self._dashboard_hub.publish_occupancy({"total": visible_count})
 
     def _create_camera(self, camera_id: str, rtsp_url: str) -> CameraService:
         return CameraService(

@@ -18,6 +18,7 @@ class FakeCameraService:
     def __init__(self) -> None:
         self.connected = False
         self.frame_number = 0
+        self.freeze = False
 
     def connect(self) -> bool:
         self.connected = True
@@ -32,7 +33,8 @@ class FakeCameraService:
     def get_frame_snapshot(self, *, copy: bool = True) -> tuple[int, FakeFrame | None]:
         if not self.connected:
             return self.frame_number, None
-        self.frame_number += 1
+        if not self.freeze:
+            self.frame_number += 1
         return self.frame_number, FakeFrame()
 
 
@@ -53,6 +55,7 @@ class FakeHub:
         self.frames: list[dict[str, object]] = []
         self.events: list[dict[str, object]] = []
         self.occupancies: list[int] = []
+        self.camera_statuses: list[str] = []
 
     def has_subscribers(self, _camera_id: str) -> bool:
         return True
@@ -63,8 +66,11 @@ class FakeHub:
     async def publish_event(self, payload: dict[str, object]) -> None:
         self.events.append(payload)
 
-    async def publish_occupancy(self, count: int) -> None:
-        self.occupancies.append(count)
+    async def publish_occupancy(self, occupancy: dict[str, int]) -> None:
+        self.occupancies.append(occupancy["total"])
+
+    async def publish_camera_status(self, **payload: object) -> None:
+        self.camera_statuses.append(str(payload["status"]))
 
 
 class FakePipeline:
@@ -87,14 +93,18 @@ class FakePipeline:
             True,
             [{"tracking_id": 4, "bbox": [1, 2, 30, 40], "direction": "down"}],
             [{"id": "event-1", "event_type": "ENTER"}],
-            1,
+            {"confirmed": 1, "uncertain": 0, "total": 1},
         )
+
+    async def mark_camera_uncertain(self, *_args: object) -> dict[str, int]:
+        return {"confirmed": 0, "uncertain": 1, "total": 0}
 
 
 class TestSettings:
     camera_sync_interval_seconds = 0.02
     camera_reconnect_delay_seconds = 0.01
     camera_health_update_seconds = 0.02
+    camera_stale_timeout_seconds = 0.03
     dashboard_stream_fps = 10.0
     dashboard_jpeg_quality = 70
     camera_read_fps = 10.0
@@ -201,6 +211,38 @@ class CameraRuntimeManagerTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn(camera.crossing_config, pipeline.crossing_configs)
         self.assertTrue(pipeline.started)
         self.assertTrue(pipeline.stopped)
+
+    async def test_reports_offline_when_frames_stop_changing(self) -> None:
+        camera = SimpleNamespace(
+            id=uuid4(),
+            name="Frozen camera",
+            location="Door",
+            rtsp_url="rtsp://example/frozen",
+            crossing_config=None,
+        )
+        catalog = FakeCatalog(camera)
+        hub = FakeHub()
+        service = FakeCameraService()
+        pipeline = FakePipeline()
+        manager = CameraRuntimeManager(
+            TestSettings(),
+            catalog,
+            hub,
+            camera_factory=lambda _camera_id, _url: service,
+            jpeg_encoder=lambda _frame, _quality: b"jpeg",
+            pipeline_factory=lambda _camera_id: pipeline,
+        )
+
+        await manager.start()
+        await asyncio.sleep(0.06)
+        service.freeze = True
+        await asyncio.sleep(0.08)
+        await manager.stop()
+
+        self.assertIn("ONLINE", catalog.health)
+        self.assertIn("OFFLINE", catalog.health)
+        self.assertIn("OFFLINE", hub.camera_statuses)
+        self.assertIn(0, hub.occupancies)
 
 
 if __name__ == "__main__":

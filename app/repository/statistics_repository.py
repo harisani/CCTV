@@ -4,7 +4,16 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Camera, Event, EventType, Person, Snapshot, Tracking
+from app.models import (
+    Camera,
+    Event,
+    EventType,
+    Person,
+    PresenceSession,
+    PresenceStatus,
+    Snapshot,
+    Tracking,
+)
 
 
 class StatisticsRepository:
@@ -36,9 +45,22 @@ class StatisticsRepository:
         )
         total_cameras = await self.session.scalar(select(func.count()).select_from(Camera).where(Camera.enabled.is_(True)))
         total_snapshots = await self.session.scalar(select(func.count()).select_from(Snapshot))
-        current_person_count = await self.session.scalar(
-            select(func.count()).select_from(Tracking).where(Tracking.is_active.is_(True))
+        presence_filters = [
+            PresenceSession.status.in_((PresenceStatus.ACTIVE, PresenceStatus.UNCERTAIN))
+        ]
+        if camera_id is not None:
+            presence_filters.append(PresenceSession.camera_id == camera_id)
+        confirmed_person_count = await self.session.scalar(
+            select(func.count())
+            .select_from(PresenceSession)
+            .where(*presence_filters, PresenceSession.status == PresenceStatus.ACTIVE)
         )
+        uncertain_person_count = await self.session.scalar(
+            select(func.count())
+            .select_from(PresenceSession)
+            .where(*presence_filters, PresenceSession.status == PresenceStatus.UNCERTAIN)
+        )
+        current_person_count = confirmed_person_count or 0
         return {
             "enter_count": enter_count or 0,
             "exit_count": exit_count or 0,
@@ -46,5 +68,7 @@ class StatisticsRepository:
             "total_persons": total_persons or 0,
             "total_cameras": total_cameras or 0,
             "total_snapshots": total_snapshots or 0,
-            "current_person_count": current_person_count or 0,
+            "current_person_count": current_person_count,
+            "confirmed_person_count": confirmed_person_count or 0,
+            "uncertain_person_count": uncertain_person_count or 0,
         }

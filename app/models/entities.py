@@ -19,6 +19,12 @@ class EventType(StrEnum):
     EXIT = "EXIT"
 
 
+class PresenceStatus(StrEnum):
+    ACTIVE = "ACTIVE"
+    UNCERTAIN = "UNCERTAIN"
+    CLOSED = "CLOSED"
+
+
 class UserRole(StrEnum):
     SUPER_ADMIN = "SUPER_ADMIN"
     ADMIN = "ADMIN"
@@ -145,6 +151,7 @@ class Camera(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
     trackings: Mapped[list[Tracking]] = relationship(back_populates="camera", cascade="all, delete-orphan")
+    presence_sessions: Mapped[list[PresenceSession]] = relationship(back_populates="camera")
 
 
 class Person(Base):
@@ -168,6 +175,7 @@ class Person(Base):
         back_populates="person", cascade="all, delete-orphan"
     )
     merged_into: Mapped[Person | None] = relationship(remote_side="Person.id")
+    presence_sessions: Mapped[list[PresenceSession]] = relationship(back_populates="person")
 
 
 class PersonEmbedding(Base):
@@ -245,3 +253,42 @@ class Snapshot(Base):
     bbox: Mapped[dict[str, float]] = mapped_column(JSON)
     saved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     event: Mapped[Event] = relationship(back_populates="snapshot")
+
+
+class PresenceSession(Base):
+    """Persisted room presence opened by ENTER and closed only by EXIT/reconciliation."""
+
+    __tablename__ = "presence_sessions"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    person_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("persons.id", ondelete="SET NULL"), index=True
+    )
+    camera_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("cameras.id", ondelete="SET NULL"), index=True
+    )
+    entry_tracking_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("trackings.id", ondelete="SET NULL"), index=True
+    )
+    exit_tracking_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("trackings.id", ondelete="SET NULL"), index=True
+    )
+    entry_event_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("events.id", ondelete="SET NULL"), unique=True, index=True
+    )
+    exit_event_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("events.id", ondelete="SET NULL"), unique=True, index=True
+    )
+    status: Mapped[PresenceStatus] = mapped_column(
+        Enum(PresenceStatus, name="presence_status"), default=PresenceStatus.ACTIVE, index=True
+    )
+    entered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    exited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    uncertain_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    last_confirmed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+    person: Mapped[Person | None] = relationship(back_populates="presence_sessions")
+    camera: Mapped[Camera | None] = relationship(back_populates="presence_sessions")

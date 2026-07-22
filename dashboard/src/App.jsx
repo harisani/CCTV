@@ -302,13 +302,19 @@ function App() {
   const [selectedIds, setSelectedIds] = useState([])
   const [gridSize, setGridSize] = useState(4)
   const [frames, setFrames] = useState({})
-  const [stats, setStats] = useState({ enter_count: 0, exit_count: 0, current_person_count: 0 })
+  const [stats, setStats] = useState({
+    enter_count: 0,
+    exit_count: 0,
+    current_person_count: 0,
+    confirmed_person_count: 0,
+    uncertain_person_count: 0,
+  })
   const [events, setEvents] = useState([])
   const [eventTotal, setEventTotal] = useState(0)
   const [eventPage, setEventPage] = useState(0)
   const [rowsPerPage, setRowsPerPage] = useState(20)
   const [persons, setPersons] = useState([])
-  const [occupancy, setOccupancy] = useState(0)
+  const [occupancy, setOccupancy] = useState({ total: 0 })
   const [cameraSearch, setCameraSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('ALL')
   const [personSearch, setPersonSearch] = useState('')
@@ -346,7 +352,6 @@ function App() {
       api(`/events?offset=${offset}&limit=${rowsPerPage}${dateQuery}`, token),
     ])
     setStats(summary)
-    setOccupancy(summary.current_person_count)
     setEvents(eventResult.items)
     setEventTotal(eventResult.total)
   }, [token, date, eventPage, rowsPerPage])
@@ -386,7 +391,19 @@ function App() {
 
   useDashboardSocket(token, selectedIds, message => {
     if (message.type === 'frame') setFrames(current => ({ ...current, [message.camera_id]: { ...message, receivedAt: Date.now() } }))
-    if (message.type === 'occupancy') setOccupancy(message.count)
+    if (message.type === 'occupancy') {
+      setOccupancy({ total: message.total ?? message.count ?? 0 })
+    }
+    if (message.type === 'camera_status') {
+      setCameras(current => current.map(camera => camera.id === message.camera_id
+        ? {
+            ...camera,
+            status: message.status,
+            last_frame_at: message.last_frame_at,
+            last_error: message.last_error,
+          }
+        : camera))
+    }
     if (message.type === 'event') {
       setEvents(current => [message.payload, ...current].slice(0, rowsPerPage))
       setEventTotal(current => current + 1)
@@ -402,8 +419,12 @@ function App() {
 
   const camerasWithStatus = useMemo(() => cameras.map(camera => {
     const frame = frames[camera.id]
-    const frameIsRecent = frame && clock - frame.receivedAt < 15000
-    return { ...camera, effectiveStatus: frameIsRecent ? 'ONLINE' : (camera.status || 'OFFLINE') }
+    const frameIsRecent = frame && clock - frame.receivedAt < 7000
+    const backendOffline = camera.status === 'OFFLINE' || camera.status === 'RECONNECTING'
+    return {
+      ...camera,
+      effectiveStatus: backendOffline ? camera.status : (frameIsRecent ? 'ONLINE' : (camera.status || 'OFFLINE')),
+    }
   }), [cameras, frames, clock])
 
   const selectedCameras = selectedIds.map(id => camerasWithStatus.find(camera => camera.id === id)).filter(Boolean)
@@ -538,7 +559,7 @@ function App() {
         <Metric label="Offline" value={offlineCount} tone="error" />
         <Metric label="Masuk hari ini" value={stats.enter_count} tone="success" />
         <Metric label="Keluar hari ini" value={stats.exit_count} tone="error" />
-        <Metric label="Orang saat ini" value={occupancy} />
+        <Metric label="Orang saat ini" value={occupancy.total} />
       </section>
 
       <section className="workbench-band" aria-labelledby="live-workbench-title">

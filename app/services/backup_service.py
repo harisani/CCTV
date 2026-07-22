@@ -29,6 +29,7 @@ from app.models import (
     Camera,
     Event,
     Person,
+    PresenceSession,
     Snapshot,
     Tracking,
     User,
@@ -36,10 +37,11 @@ from app.models import (
 from app.repository import AuditRepository, BackupRepository
 
 ARCHIVE_FORMAT = "cctv-people-flow-observational-backup"
-ARCHIVE_SCHEMA_VERSION = 1
-ARCHIVE_ENTITIES = frozenset(
+ARCHIVE_SCHEMA_VERSION = 2
+ARCHIVE_ENTITIES_V1 = frozenset(
     {"cameras", "persons", "trackings", "events", "snapshots", "users", "audit_logs"}
 )
+ARCHIVE_ENTITIES = ARCHIVE_ENTITIES_V1 | {"presence_sessions"}
 _backup_lock = asyncio.Lock()
 
 
@@ -214,7 +216,8 @@ class ArchiveCodec:
     ) -> None:
         if manifest.get("format") != ARCHIVE_FORMAT:
             raise ValueError("Archive format is not supported")
-        if manifest.get("schema_version") != ARCHIVE_SCHEMA_VERSION:
+        schema_version = manifest.get("schema_version")
+        if schema_version not in {1, ARCHIVE_SCHEMA_VERSION}:
             raise ValueError("Archive schema version is not supported")
         try:
             date.fromisoformat(manifest["backup_date"])
@@ -248,7 +251,8 @@ class ArchiveCodec:
         counts = manifest.get("record_counts")
         if not isinstance(counts, dict):
             raise ValueError("Archive record counts are missing")
-        for entity in ARCHIVE_ENTITIES:
+        required_entities = ARCHIVE_ENTITIES if schema_version == 2 else ARCHIVE_ENTITIES_V1
+        for entity in required_entities:
             member = f"data/{entity}.jsonl"
             if member not in declared_names or not isinstance(counts.get(entity), int):
                 raise ValueError(f"Archive data set is incomplete: {entity}")
@@ -550,6 +554,19 @@ class BackupService:
                 )
             ).all()
         )
+        presence_sessions = list(
+            (
+                await session.scalars(
+                    select(PresenceSession)
+                    .where(
+                        PresenceSession.entered_at < end_at,
+                        (PresenceSession.exited_at.is_(None))
+                        | (PresenceSession.exited_at >= start_at),
+                    )
+                    .order_by(PresenceSession.entered_at)
+                )
+            ).all()
+        )
         users = list((await session.scalars(select(User).order_by(User.username))).all())
         audit_logs = list(
             (
@@ -583,6 +600,7 @@ class BackupService:
             "persons": [_model_record(item, excluded={"reid_embedding"}) for item in persons],
             "trackings": [_model_record(item) for item in trackings],
             "events": [_model_record(item) for item in events],
+            "presence_sessions": [_model_record(item) for item in presence_sessions],
             "snapshots": snapshot_records,
             "users": [
                 _model_record(

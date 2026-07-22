@@ -677,30 +677,65 @@ a,
   z-index: calc(var(--z-raised) - 1);
   width: 100%;
   height: 100%;
-  overflow: visible;
+  overflow: hidden;
   pointer-events: none;
 }
 
-.crossing-overlay line,
-.crossing-overlay polygon {
-  fill: var(--color-warning-soft);
-  fill-opacity: 0.12;
-  stroke: var(--color-error-signal);
-  stroke-width: 0.006;
-  stroke-dasharray: 0.018 0.01;
+.crossing-overlay__halo {
+  fill: none;
+  stroke: var(--color-graphite);
+  stroke-width: 8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
   vector-effect: non-scaling-stroke;
 }
 
-.crossing-overlay circle {
+.crossing-overlay__line {
+  fill: none;
+  stroke: var(--color-error-signal);
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 14 9;
+  vector-effect: non-scaling-stroke;
+}
+
+.crossing-overlay__polygon-fill {
+  fill: var(--color-warning-soft);
+  fill-opacity: 0.2;
+  stroke: none;
+}
+
+.crossing-overlay__handle {
   fill: var(--color-error-signal);
   stroke: var(--color-graphite);
-  stroke-width: 0.004;
+  stroke-width: 4;
   vector-effect: non-scaling-stroke;
 }
 
-.crossing-overlay--editable line,
-.crossing-overlay--editable polygon {
-  stroke-width: 0.008;
+.crossing-overlay__direction-labels text,
+.crossing-overlay__area-label {
+  fill: var(--color-graphite-ink);
+  stroke: var(--color-graphite);
+  stroke-width: 5;
+  paint-order: stroke fill;
+  font-family: var(--font-mono);
+  font-size: 25px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  vector-effect: non-scaling-stroke;
+}
+
+.crossing-overlay__area-label {
+  text-anchor: middle;
+}
+
+.crossing-overlay--editable .crossing-overlay__halo {
+  stroke-width: 10;
+}
+
+.crossing-overlay--editable .crossing-overlay__line {
+  stroke-width: 5;
 }
 
 .crossing-dialog .MuiPaper-root {
@@ -744,9 +779,26 @@ a,
   user-select: none;
 }
 
+.crossing-stage[data-dragging="true"] {
+  border-color: var(--color-accent);
+  box-shadow: inset 0 0 0 var(--rule-thin) var(--color-accent);
+  cursor: grabbing;
+}
+
+.crossing-stage:focus-visible {
+  outline: 3px solid var(--color-focus) !important;
+  outline-offset: 3px;
+}
+
 .crossing-stage[data-disabled="true"] {
   cursor: not-allowed;
   opacity: 0.62;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .crossing-stage:not([data-disabled="true"]):hover {
+    border-color: var(--color-accent);
+  }
 }
 
 .crossing-stage img {
@@ -780,6 +832,30 @@ a,
   pointer-events: none;
 }
 
+.crossing-stage__legend {
+  position: absolute;
+  inset-block-end: var(--space-sm);
+  inset-inline-start: var(--space-sm);
+  z-index: var(--z-raised);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-2xs) var(--space-xs);
+  border: var(--rule-thin) solid var(--color-graphite-3);
+  border-radius: var(--radius-xs);
+  background: var(--color-frame-overlay);
+  color: var(--color-graphite-ink);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  pointer-events: none;
+}
+
+.crossing-stage__legend i {
+  display: block;
+  width: 1.75rem;
+  border-block-start: 4px dashed var(--color-error-signal);
+}
+
 .crossing-controls {
   display: flex;
   min-width: 0;
@@ -811,6 +887,7 @@ a,
 
 .crossing-controls__actions {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-xs);
 }
 

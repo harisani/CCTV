@@ -2,15 +2,23 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 
-from app.models import Event, EventType, Snapshot, Tracking
+from app.models import (
+    Event,
+    EventType,
+    PresenceSession,
+    PresenceStatus,
+    Snapshot,
+    Tracking,
+)
 from app.repository.person_repository import PersonRepository
 if TYPE_CHECKING:
     from app.services.crossing_service import CrossingEvent
@@ -129,7 +137,42 @@ class PipelineRepository:
         async with self._session_factory() as session:
             existing = await session.get(Event, crossing.event_id)
             if existing is not None:
-                return False, {}
+                return False, {"reason": "already_persisted", "discard_snapshot": False}
+            tracking = await session.get(Tracking, database_tracking_id)
+            if tracking is None:
+                raise ValueError("Tracking row is required for a presence event")
+            open_presence = await self._find_open_presence(
+                session,
+                person_id=person_id,
+                database_tracking_id=database_tracking_id,
+            )
+            crossing_type = EventType(crossing.event_type.value)
+            presence_match = "NEW_SESSION" if crossing_type == EventType.ENTER else "IDENTITY"
+            if crossing_type == EventType.ENTER and open_presence is not None:
+                self._logger_for_transition(
+                    "Duplicate ENTER suppressed",
+                    crossing=crossing,
+                    person_id=person_id,
+                )
+                return False, {"reason": "duplicate_enter", "discard_snapshot": True}
+            if crossing_type == EventType.EXIT and open_presence is None:
+                open_presence = await session.scalar(
+                    select(PresenceSession)
+                    .where(
+                        PresenceSession.camera_id == tracking.camera_id,
+                        PresenceSession.status.in_((PresenceStatus.ACTIVE, PresenceStatus.UNCERTAIN)),
+                    )
+                    .order_by(PresenceSession.entered_at)
+                    .with_for_update()
+                )
+                presence_match = "CAMERA_FIFO"
+            if crossing_type == EventType.EXIT and open_presence is None:
+                self._logger_for_transition(
+                    "Orphan EXIT suppressed",
+                    crossing=crossing,
+                    person_id=person_id,
+                )
+                return False, {"reason": "orphan_exit", "discard_snapshot": True}
             event = Event(
                 id=crossing.event_id,
                 tracking_id=database_tracking_id,
@@ -143,9 +186,24 @@ class PipelineRepository:
                     "confidence": track.confidence,
                     "direction": track.direction,
                     "snapshot_error": snapshot_error,
+                    "presence_match": presence_match,
+                    "matched_presence_person_id": (
+                        str(open_presence.person_id)
+                        if open_presence is not None and open_presence.person_id is not None
+                        else None
+                    ),
                 },
             )
             session.add(event)
+            await session.flush()
+            await self._apply_presence_event(
+                session,
+                event=event,
+                database_tracking_id=database_tracking_id,
+                person_id=person_id,
+                tracking=tracking,
+                existing=open_presence,
+            )
             if snapshot is not None:
                 session.add(
                     Snapshot(
@@ -166,7 +224,7 @@ class PipelineRepository:
                 await session.commit()
             except IntegrityError:
                 await session.rollback()
-                return False, {}
+                return False, {"reason": "integrity_conflict", "discard_snapshot": False}
             return True, {
                 "id": str(event.id),
                 "tracking_id": str(database_tracking_id),
@@ -179,18 +237,146 @@ class PipelineRepository:
                 "snapshot_path": str(snapshot.image_path) if snapshot else None,
             }
 
-    async def current_occupancy(self) -> int:
-        from sqlalchemy import func
-
-        async with self._session_factory() as session:
-            return int(
-                await session.scalar(
-                    select(func.count())
-                    .select_from(Tracking)
-                    .where(Tracking.is_active.is_(True))
-                )
-                or 0
+    @staticmethod
+    async def _find_open_presence(
+        session: Any,
+        *,
+        person_id: UUID | None,
+        database_tracking_id: UUID,
+    ) -> PresenceSession | None:
+        match_filter = (
+            PresenceSession.person_id == person_id
+            if person_id is not None
+            else PresenceSession.entry_tracking_id == database_tracking_id
+        )
+        return await session.scalar(
+            select(PresenceSession)
+            .where(
+                match_filter,
+                PresenceSession.status.in_((PresenceStatus.ACTIVE, PresenceStatus.UNCERTAIN)),
             )
+            .order_by(PresenceSession.entered_at.desc())
+            .with_for_update()
+        )
+
+    @staticmethod
+    def _logger_for_transition(
+        message: str,
+        *,
+        crossing: CrossingEvent,
+        person_id: UUID | None,
+    ) -> None:
+        logging.getLogger(__name__).info(
+            "%s event=%s tracking_id=%s person_id=%s",
+            message,
+            crossing.event_type.value,
+            crossing.tracking_id,
+            person_id,
+        )
+
+    async def current_occupancy(self) -> dict[str, int]:
+        """Return camera-confirmed occupancy and report uncertain presence separately."""
+        async with self._session_factory() as session:
+            rows = (
+                await session.execute(
+                    select(PresenceSession.status, func.count())
+                    .where(PresenceSession.status.in_((PresenceStatus.ACTIVE, PresenceStatus.UNCERTAIN)))
+                    .group_by(PresenceSession.status)
+                )
+            ).all()
+            counts = {status: int(count) for status, count in rows}
+            confirmed = counts.get(PresenceStatus.ACTIVE, 0)
+            uncertain = counts.get(PresenceStatus.UNCERTAIN, 0)
+            return {
+                "confirmed": confirmed,
+                "uncertain": uncertain,
+                "total": confirmed,
+            }
+
+    async def mark_camera_presence_uncertain(
+        self, camera_id: UUID, *, occurred_at: datetime | None = None
+    ) -> dict[str, int]:
+        """Remove camera-lost presence from current occupancy and flag it separately."""
+        timestamp = occurred_at or datetime.now(UTC)
+        async with self._session_factory() as session:
+            await session.execute(
+                update(PresenceSession)
+                .where(
+                    PresenceSession.camera_id == camera_id,
+                    PresenceSession.status == PresenceStatus.ACTIVE,
+                )
+                .values(
+                    status=PresenceStatus.UNCERTAIN,
+                    uncertain_since=timestamp,
+                    updated_at=timestamp,
+                )
+            )
+            await session.commit()
+        return await self.current_occupancy()
+
+    async def confirm_person_presence(
+        self,
+        person_id: UUID | None,
+        *,
+        camera_id: UUID,
+        confirmed_at: datetime,
+    ) -> None:
+        """Restore an uncertain session when ReID observes the same person again."""
+        if person_id is None:
+            return
+        async with self._session_factory() as session:
+            await session.execute(
+                update(PresenceSession)
+                .where(
+                    PresenceSession.person_id == person_id,
+                    PresenceSession.status == PresenceStatus.UNCERTAIN,
+                )
+                .values(
+                    status=PresenceStatus.ACTIVE,
+                    camera_id=camera_id,
+                    uncertain_since=None,
+                    last_confirmed_at=confirmed_at,
+                    updated_at=confirmed_at,
+                )
+            )
+            await session.commit()
+
+    @staticmethod
+    async def _apply_presence_event(
+        session: Any,
+        *,
+        event: Event,
+        database_tracking_id: UUID,
+        person_id: UUID | None,
+        tracking: Tracking,
+        existing: PresenceSession | None,
+    ) -> None:
+        if event.event_type == EventType.ENTER:
+            assert existing is None
+            session.add(
+                PresenceSession(
+                    id=uuid4(),
+                    person_id=person_id,
+                    camera_id=tracking.camera_id,
+                    entry_tracking_id=database_tracking_id,
+                    entry_event_id=event.id,
+                    status=PresenceStatus.ACTIVE,
+                    entered_at=event.occurred_at,
+                    last_confirmed_at=event.occurred_at,
+                    created_at=event.occurred_at,
+                    updated_at=event.occurred_at,
+                )
+            )
+            return
+
+        assert existing is not None
+        existing.status = PresenceStatus.CLOSED
+        existing.exit_tracking_id = database_tracking_id
+        existing.exit_event_id = event.id
+        existing.exited_at = event.occurred_at
+        existing.uncertain_since = None
+        existing.last_confirmed_at = event.occurred_at
+        existing.updated_at = event.occurred_at
 
     @staticmethod
     def remove_snapshot(snapshot: SnapshotResult | None) -> None:

@@ -328,6 +328,19 @@ Kamera yang belum mempunyai konfigurasi masih memakai nilai crossing global
 dari `.env` untuk kompatibilitas dengan instalasi sebelumnya. Setelah konfigurasi
 disimpan dari dashboard, konfigurasi per kamera menjadi sumber utama.
 
+### Okupansi tahan gangguan kamera
+
+Jumlah orang saat ini berasal dari sesi keberadaan yang dibuka oleh event
+`ENTER` dan ditutup oleh `EXIT`, bukan dari banyaknya tracking yang sedang aktif.
+Jika kamera berhenti mengirim frame, sesi terbuka tetap dihitung tetapi berubah
+menjadi `UNCERTAIN`. Dashboard menampilkan jumlah total dan jumlah yang belum
+pasti secara terpisah. Ketika ReID kembali melihat orang yang sama, sesi kembali
+`ACTIVE`; event `EXIT` akan menutup sesi tersebut.
+
+`CAMERA_STALE_TIMEOUT_SECONDS` menentukan berapa detik tanpa frame baru sebelum
+kamera ditandai `OFFLINE`. Status ini dikirim langsung melalui WebSocket, jadi
+dashboard tidak perlu menunggu polling berkala.
+
 Hentikan layanan dengan `docker compose down`. Tambahkan `-v` hanya bila data
 PostgreSQL memang ingin dihapus.
 

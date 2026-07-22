@@ -37,20 +37,49 @@ const directionOptions = {
   polygon: [['down', 'Luar → dalam']],
 }
 
-export function CrossingOverlay({ config, editable = false }) {
+const SVG_WIDTH = 1000
+
+const clampUnit = value => Math.min(1, Math.max(0, value))
+
+export function CrossingOverlay({ config, editable = false, aspectRatio = 16 / 9 }) {
   if (!config?.enabled) return null
   const points = config.polygon_points || []
+  const safeRatio = Math.min(4, Math.max(0.25, Number(aspectRatio) || 16 / 9))
+  const svgHeight = SVG_WIDTH / safeRatio
+  const scaledPoints = points.map(point => ({ x: point.x * SVG_WIDTH, y: point.y * svgHeight }))
+  const openPointList = scaledPoints.map(point => `${point.x},${point.y}`).join(' ')
+  const pointList = points.length >= 3 ? `${openPointList} ${scaledPoints[0].x},${scaledPoints[0].y}` : openPointList
+  const position = clampUnit(config.position ?? 0.5) * (config.line_type === 'horizontal' ? svgHeight : SVG_WIDTH)
+  const isHorizontal = config.line_type === 'horizontal'
+  const isVertical = config.line_type === 'vertical'
+  const enterOnPositiveSide = config.enter_direction === 'down' || config.enter_direction === 'right'
+  const labelPrimary = enterOnPositiveSide ? 'EXIT' : 'ENTER'
+  const labelSecondary = enterOnPositiveSide ? 'ENTER' : 'EXIT'
+
   return <svg
     className={`crossing-overlay${editable ? ' crossing-overlay--editable' : ''}`}
-    viewBox="0 0 1 1"
+    viewBox={`0 0 ${SVG_WIDTH} ${svgHeight}`}
     preserveAspectRatio="none"
     aria-hidden="true"
   >
-    {config.line_type === 'horizontal' && <line x1="0" y1={config.position} x2="1" y2={config.position} />}
-    {config.line_type === 'vertical' && <line x1={config.position} y1="0" x2={config.position} y2="1" />}
+    {(isHorizontal || isVertical) && <>
+      <line className="crossing-overlay__halo" x1={isHorizontal ? 0 : position} y1={isHorizontal ? position : 0} x2={isHorizontal ? SVG_WIDTH : position} y2={isHorizontal ? position : svgHeight} />
+      <line className="crossing-overlay__line" x1={isHorizontal ? 0 : position} y1={isHorizontal ? position : 0} x2={isHorizontal ? SVG_WIDTH : position} y2={isHorizontal ? position : svgHeight} />
+      {editable && <>
+        <circle className="crossing-overlay__handle" cx={isHorizontal ? 28 : position} cy={isHorizontal ? position : 28} r="14" />
+        <circle className="crossing-overlay__handle" cx={isHorizontal ? SVG_WIDTH - 28 : position} cy={isHorizontal ? position : svgHeight - 28} r="14" />
+        <g className="crossing-overlay__direction-labels">
+          <text x={isHorizontal ? 28 : position - 22} y={isHorizontal ? Math.max(30, position - 24) : 38} textAnchor={isHorizontal ? 'start' : 'end'}>{labelPrimary}</text>
+          <text x={isHorizontal ? 28 : position + 22} y={isHorizontal ? Math.min(svgHeight - 18, position + 42) : 38} textAnchor={isHorizontal ? 'start' : 'start'}>{labelSecondary}</text>
+        </g>
+      </>}
+    </>}
     {config.line_type === 'polygon' && points.length > 0 && <>
-      <polygon points={points.map(point => `${point.x},${point.y}`).join(' ')} />
-      {points.map((point, index) => <circle key={`${point.x}-${point.y}-${index}`} cx={point.x} cy={point.y} r="0.012" />)}
+      {points.length >= 3 && <polygon className="crossing-overlay__polygon-fill" points={pointList} />}
+      <polyline className="crossing-overlay__halo" points={pointList} />
+      <polyline className="crossing-overlay__line" points={pointList} />
+      {editable && scaledPoints.map((point, index) => <circle className="crossing-overlay__handle" key={`${point.x}-${point.y}-${index}`} cx={point.x} cy={point.y} r="14" />)}
+      {editable && points.length >= 3 && <text className="crossing-overlay__area-label" x={scaledPoints.reduce((sum, point) => sum + point.x, 0) / scaledPoints.length} y={scaledPoints.reduce((sum, point) => sum + point.y, 0) / scaledPoints.length}>AREA ENTER</text>}
     </>}
   </svg>
 }
@@ -60,6 +89,8 @@ export default function CrossingConfigDialog({ camera, frame, token, open, onClo
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [saved, setSaved] = useState(false)
+  const [imageRatio, setImageRatio] = useState(null)
+  const [dragging, setDragging] = useState(false)
   const stageRef = useRef(null)
 
   useEffect(() => {
@@ -68,6 +99,8 @@ export default function CrossingConfigDialog({ camera, frame, token, open, onClo
     setSaving(false)
     setSaved(false)
     setError('')
+    setImageRatio(null)
+    setDragging(false)
   }, [open, camera])
 
   const directionItems = useMemo(() => directionOptions[config.line_type], [config.line_type])
@@ -86,23 +119,68 @@ export default function CrossingConfigDialog({ camera, frame, token, open, onClo
     setSaved(false)
   }
 
-  const draw = event => {
-    if (!config.enabled || !stageRef.current) return
+  const positionFromPointer = event => {
     const rect = stageRef.current.getBoundingClientRect()
-    const x = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width))
-    const y = Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height))
-    setConfig(current => current.line_type === 'polygon'
-      ? { ...current, polygon_points: [...current.polygon_points, { x, y }].slice(0, 20) }
-      : { ...current, position: current.line_type === 'horizontal' ? y : x })
+    return {
+      x: clampUnit((event.clientX - rect.left) / rect.width),
+      y: clampUnit((event.clientY - rect.top) / rect.height),
+    }
+  }
+
+  const updateLineFromPointer = event => {
+    if (!config.enabled || !stageRef.current || config.line_type === 'polygon') return
+    const { x, y } = positionFromPointer(event)
+    setConfig(current => ({ ...current, position: current.line_type === 'horizontal' ? y : x }))
     setError('')
     setSaved(false)
   }
 
-  const undo = () => setConfig(current => current.line_type === 'polygon'
-    ? { ...current, polygon_points: current.polygon_points.slice(0, -1) }
-    : { ...current, position: 0.5 })
+  const startDrawing = event => {
+    if (!config.enabled || !stageRef.current) return
+    const { x, y } = positionFromPointer(event)
+    if (config.line_type === 'polygon') {
+      setConfig(current => ({ ...current, polygon_points: [...current.polygon_points, { x, y }].slice(0, 20) }))
+    } else {
+      event.currentTarget.setPointerCapture?.(event.pointerId)
+      setDragging(true)
+      updateLineFromPointer(event)
+    }
+    setError('')
+    setSaved(false)
+  }
 
-  const clear = () => setConfig(current => ({ ...current, position: 0.5, polygon_points: [] }))
+  const continueDrawing = event => {
+    if (dragging) updateLineFromPointer(event)
+  }
+
+  const stopDrawing = event => {
+    if (!dragging) return
+    event.currentTarget.releasePointerCapture?.(event.pointerId)
+    setDragging(false)
+  }
+
+  const moveWithKeyboard = event => {
+    if (!config.enabled || config.line_type === 'polygon') return
+    const delta = event.shiftKey ? 0.05 : 0.01
+    const negative = event.key === 'ArrowUp' || event.key === 'ArrowLeft'
+    const positive = event.key === 'ArrowDown' || event.key === 'ArrowRight'
+    if (!negative && !positive) return
+    event.preventDefault()
+    setConfig(current => ({ ...current, position: clampUnit((current.position ?? 0.5) + (negative ? -delta : delta)) }))
+    setSaved(false)
+  }
+
+  const undo = () => {
+    setConfig(current => current.line_type === 'polygon'
+      ? { ...current, polygon_points: current.polygon_points.slice(0, -1) }
+      : { ...current, position: 0.5 })
+    setSaved(false)
+  }
+
+  const clear = () => {
+    setConfig(current => ({ ...current, position: 0.5, polygon_points: [] }))
+    setSaved(false)
+  }
 
   const save = async () => {
     if (!geometryReady) {
@@ -119,6 +197,7 @@ export default function CrossingConfigDialog({ camera, frame, token, open, onClo
       setConfig(result)
       setSaved(true)
       await onSaved()
+      onClose()
     } catch (err) {
       setError(err.message)
     } finally {
@@ -126,27 +205,56 @@ export default function CrossingConfigDialog({ camera, frame, token, open, onClo
     }
   }
 
-  const ratio = frame?.width && frame?.height ? frame.width / frame.height : 16 / 9
+  const ratio = imageRatio || (frame?.width && frame?.height ? frame.width / frame.height : 16 / 9)
+  const coordinateLabel = config.line_type === 'polygon'
+    ? `${config.polygon_points.length} titik relatif`
+    : `${config.line_type === 'horizontal' ? 'Y' : 'X'} ${Math.round((config.position ?? 0.5) * 100)}%`
 
   return <Dialog className="crossing-dialog" open={open} onClose={saving ? undefined : onClose} fullWidth maxWidth="lg">
     <DialogTitle>Atur area crossing · {camera?.name}</DialogTitle>
     <DialogContent>
       <div className="crossing-dialog__intro">
-        <p>Klik pada gambar untuk menempatkan garis. Pada mode polygon, klik setiap sudut area secara berurutan.</p>
+        <p>Gambar langsung di atas kamera—koordinat menyesuaikan resolusi secara otomatis. Untuk garis, tekan lalu geser. Untuk polygon, klik setiap sudut secara berurutan.</p>
         <FormControlLabel
-          control={<Switch checked={config.enabled} onChange={event => setConfig(current => ({ ...current, enabled: event.target.checked }))} />}
+          control={<Switch checked={config.enabled} onChange={event => {
+            setConfig(current => ({ ...current, enabled: event.target.checked }))
+            setSaved(false)
+          }} />}
           label="Deteksi crossing aktif"
         />
       </div>
       {error && <Alert severity="error">{error}</Alert>}
       {saved && <Alert severity="success">Konfigurasi tersimpan dan akan diterapkan otomatis pada pipeline.</Alert>}
       <div className="crossing-editor-layout">
-        <div className="crossing-stage" ref={stageRef} style={{ '--crossing-ratio': ratio }} onPointerDown={draw} data-disabled={!config.enabled}>
+        <div
+          className="crossing-stage"
+          ref={stageRef}
+          style={{ '--crossing-ratio': ratio }}
+          onPointerDown={startDrawing}
+          onPointerMove={continueDrawing}
+          onPointerUp={stopDrawing}
+          onPointerCancel={stopDrawing}
+          onKeyDown={moveWithKeyboard}
+          data-disabled={!config.enabled}
+          data-dragging={dragging}
+          role="group"
+          tabIndex={config.enabled ? 0 : -1}
+          aria-label={`Editor ${config.line_type} kamera ${camera?.name}. ${coordinateLabel}`}
+        >
           {frame?.image
-            ? <img src={`data:image/jpeg;base64,${frame.image}`} alt={`Frame konfigurasi ${camera?.name}`} draggable="false" />
+            ? <img
+                src={`data:image/jpeg;base64,${frame.image}`}
+                alt={`Frame konfigurasi ${camera?.name}`}
+                draggable="false"
+                onLoad={event => {
+                  const { naturalWidth, naturalHeight } = event.currentTarget
+                  if (naturalWidth && naturalHeight) setImageRatio(naturalWidth / naturalHeight)
+                }}
+              />
             : <div className="crossing-stage__empty">Frame belum tersedia. Geometri tetap dapat disiapkan pada bidang referensi.</div>}
-          <CrossingOverlay config={config} editable />
-          <span className="crossing-stage__hint">{config.line_type === 'polygon' ? `${config.polygon_points.length} titik` : `${Math.round((config.position ?? 0.5) * 100)}%`}</span>
+          <CrossingOverlay config={config} editable aspectRatio={ratio} />
+          <span className="crossing-stage__hint">{coordinateLabel}</span>
+          <span className="crossing-stage__legend"><i aria-hidden="true" /> Garis crossing</span>
         </div>
         <div className="crossing-controls">
           <ToggleButtonGroup exclusive fullWidth size="small" value={config.line_type} onChange={changeType} disabled={!config.enabled} aria-label="Bentuk area crossing">

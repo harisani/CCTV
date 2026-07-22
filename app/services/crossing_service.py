@@ -32,6 +32,8 @@ class VirtualLineConfig:
     enter_direction: Direction = "down"
     polygon_points: tuple[Point, ...] = ()
     max_inactive_frames: int = 300
+    hysteresis_ratio: float = 0.01
+    event_cooldown_frames: int = 3
     enabled: bool = True
     normalized: bool = False
 
@@ -50,6 +52,10 @@ class VirtualLineConfig:
             raise ValueError("polygon requires at least three points")
         if self.max_inactive_frames <= 0:
             raise ValueError("max_inactive_frames must be greater than zero")
+        if not 0 <= self.hysteresis_ratio <= 0.25:
+            raise ValueError("hysteresis_ratio must be between zero and 0.25")
+        if self.event_cooldown_frames < 0:
+            raise ValueError("event_cooldown_frames must not be negative")
 
     @classmethod
     def from_settings(cls, settings: Any) -> "VirtualLineConfig":
@@ -61,11 +67,18 @@ class VirtualLineConfig:
             enter_direction=settings.crossing_enter_direction,
             polygon_points=points,
             max_inactive_frames=settings.crossing_max_inactive_frames,
+            hysteresis_ratio=settings.crossing_hysteresis_ratio,
+            event_cooldown_frames=settings.crossing_event_cooldown_frames,
         )
 
     @classmethod
     def from_mapping(
-        cls, value: dict[str, Any], *, max_inactive_frames: int = 300
+        cls,
+        value: dict[str, Any],
+        *,
+        max_inactive_frames: int = 300,
+        hysteresis_ratio: float = 0.01,
+        event_cooldown_frames: int = 3,
     ) -> "VirtualLineConfig":
         return cls(
             line_id=str(value.get("line_id", "main-door")),
@@ -77,6 +90,8 @@ class VirtualLineConfig:
                 for point in value.get("polygon_points", [])
             ),
             max_inactive_frames=max_inactive_frames,
+            hysteresis_ratio=hysteresis_ratio,
+            event_cooldown_frames=event_cooldown_frames,
             enabled=bool(value.get("enabled", True)),
             normalized=True,
         )
@@ -103,9 +118,9 @@ class CrossingService:
         if config is None:
             config = VirtualLineConfig.from_settings(settings or self._load_settings())
         self._config = config
-        self._last_positions: dict[int, Point] = {}
+        self._stable_sides: dict[int, int] = {}
         self._last_seen_frame: dict[int, int] = {}
-        self._emitted_events: set[tuple[int, CrossingType]] = set()
+        self._last_event_frame: dict[int, int] = {}
         self._frame_number = 0
         self._frame_size: tuple[int, int] | None = None
         self._logger = logging.getLogger(__name__)
@@ -117,10 +132,15 @@ class CrossingService:
             return []
         events: list[CrossingEvent] = []
         for track in tracks:
-            previous = self._last_positions.get(track.tracking_id)
-            if previous is not None:
-                event_type = self._crossing_type(previous, track.centroid)
-                if event_type is not None and (track.tracking_id, event_type) not in self._emitted_events:
+            current_side = self._stable_side(track.centroid)
+            previous_side = self._stable_sides.get(track.tracking_id)
+            if current_side != 0:
+                cooldown_elapsed = (
+                    self._frame_number - self._last_event_frame.get(track.tracking_id, -10_000)
+                    > self._config.event_cooldown_frames
+                )
+                if previous_side is not None and previous_side != current_side and cooldown_elapsed:
+                    event_type = self._crossing_type(previous_side, current_side)
                     event = CrossingEvent(
                         event_id=uuid4(),
                         event_type=event_type,
@@ -129,7 +149,7 @@ class CrossingService:
                         centroid=track.centroid,
                         occurred_at=datetime.now(UTC),
                     )
-                    self._emitted_events.add((track.tracking_id, event_type))
+                    self._last_event_frame[track.tracking_id] = self._frame_number
                     events.append(event)
                     self._logger.info(
                         "Crossing event=%s line=%s tracking_id=%s",
@@ -137,16 +157,20 @@ class CrossingService:
                         self._config.line_id,
                         track.tracking_id,
                     )
-            self._last_positions[track.tracking_id] = track.centroid
+                    self._stable_sides[track.tracking_id] = current_side
+                elif previous_side is None:
+                    self._stable_sides[track.tracking_id] = current_side
+                elif previous_side == current_side:
+                    self._stable_sides[track.tracking_id] = current_side
             self._last_seen_frame[track.tracking_id] = self._frame_number
         self._remove_inactive_tracks()
         return events
 
     def reset(self) -> None:
         """Clear positions and event de-duplication state."""
-        self._last_positions.clear()
+        self._stable_sides.clear()
         self._last_seen_frame.clear()
-        self._emitted_events.clear()
+        self._last_event_frame.clear()
         self._frame_number = 0
 
     def set_frame_size(self, width: int, height: int) -> None:
@@ -155,27 +179,34 @@ class CrossingService:
             raise ValueError("frame dimensions must be greater than zero")
         self._frame_size = (width, height)
 
-    def _crossing_type(self, previous: Point, current: Point) -> CrossingType | None:
-        position = self._scaled_position()
-        polygon_points = self._scaled_polygon()
+    def _stable_side(self, centroid: Point) -> int:
         if self._config.line_type == "polygon":
-            was_inside = _point_in_polygon(previous, polygon_points)
-            is_inside = _point_in_polygon(current, polygon_points)
-            if not was_inside and is_inside:
-                return CrossingType.ENTER
-            if was_inside and not is_inside:
-                return CrossingType.EXIT
-            return None
+            return 1 if _point_in_polygon(centroid, self._scaled_polygon()) else -1
+        position = self._scaled_position()
+        assert position is not None
+        value = centroid[1] if self._config.line_type == "horizontal" else centroid[0]
+        margin = self._scaled_hysteresis()
+        if value < position - margin:
+            return -1
+        if value > position + margin:
+            return 1
+        return 0
 
-        if self._config.line_type == "horizontal":
-            crossed = _opposite_sides(previous[1], current[1], position)
-            direction = "down" if current[1] > previous[1] else "up"
-        else:
-            crossed = _opposite_sides(previous[0], current[0], position)
-            direction = "right" if current[0] > previous[0] else "left"
-        if not crossed:
-            return None
+    def _crossing_type(self, previous_side: int, current_side: int) -> CrossingType:
+        if self._config.line_type == "polygon":
+            return CrossingType.ENTER if current_side == 1 else CrossingType.EXIT
+        positive_direction = "down" if self._config.line_type == "horizontal" else "right"
+        direction = positive_direction if current_side > previous_side else (
+            "up" if self._config.line_type == "horizontal" else "left"
+        )
         return CrossingType.ENTER if direction == self._config.enter_direction else CrossingType.EXIT
+
+    def _scaled_hysteresis(self) -> float:
+        if self._frame_size is None:
+            return 0.0
+        width, height = self._frame_size
+        dimension = height if self._config.line_type == "horizontal" else width
+        return dimension * self._config.hysteresis_ratio
 
     def _scaled_position(self) -> float | None:
         position = self._config.position
@@ -200,20 +231,14 @@ class CrossingService:
         inactive_ids = [track_id for track_id, frame in self._last_seen_frame.items() if frame < expiry_frame]
         for track_id in inactive_ids:
             self._last_seen_frame.pop(track_id, None)
-            self._last_positions.pop(track_id, None)
-            self._emitted_events.discard((track_id, CrossingType.ENTER))
-            self._emitted_events.discard((track_id, CrossingType.EXIT))
+            self._stable_sides.pop(track_id, None)
+            self._last_event_frame.pop(track_id, None)
 
     @staticmethod
     def _load_settings() -> Any:
         from app.config.settings import get_settings
 
         return get_settings()
-
-
-def _opposite_sides(previous: float, current: float, position: float | None) -> bool:
-    assert position is not None
-    return (previous < position < current) or (current < position < previous)
 
 
 def _parse_polygon_points(raw_points: str) -> tuple[Point, ...]:

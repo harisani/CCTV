@@ -239,6 +239,8 @@ class StatisticsResponse(BaseModel):
     total_cameras: int
     total_snapshots: int
     current_person_count: int
+    confirmed_person_count: int
+    uncertain_person_count: int
 
 
 class BackupCreate(BaseModel):

@@ -53,6 +53,8 @@ class Settings(BaseSettings):
     crossing_enter_direction: Literal["up", "down", "left", "right"] = "down"
     crossing_polygon_points: str = ""
     crossing_max_inactive_frames: int = Field(default=300, gt=0)
+    crossing_hysteresis_ratio: float = Field(default=0.01, ge=0, le=0.25)
+    crossing_event_cooldown_frames: int = Field(default=3, ge=0)
 
     reid_model: str = "osnet_x1_0"
     reid_device: str = "auto"
@@ -77,6 +79,9 @@ class Settings(BaseSettings):
     api_admin_password: str = Field(repr=False)
     login_max_failed_attempts: int = Field(default=5, gt=0)
     login_lock_minutes: int = Field(default=15, gt=0)
+
+    presence_timezone: str = "Asia/Jakarta"
+    presence_reconcile_interval_seconds: float = Field(default=30.0, ge=5)
 
     enable_backup_scheduler: bool = True
     backup_schedule_time: str = Field(
@@ -109,6 +114,7 @@ class Settings(BaseSettings):
     camera_frame_width: int = Field(default=1280, gt=0)
     camera_frame_height: int = Field(default=720, gt=0)
     camera_reconnect_delay_seconds: float = Field(default=3.0, gt=0)
+    camera_stale_timeout_seconds: float = Field(default=5.0, gt=0)
     camera_sync_interval_seconds: float = Field(default=5.0, gt=0)
     dashboard_stream_fps: float = Field(default=2.0, gt=0, le=10)
     dashboard_jpeg_quality: int = Field(default=70, ge=30, le=95)
