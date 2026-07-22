@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.settings import Settings, get_settings
 from app.database.session import get_session
-from app.repository import BackupRepository, CameraRepository, EventRepository, PersonRepository, SnapshotRepository, StatisticsRepository, UserRepository
+from app.repository import BackupRepository, CameraRepository, DisasterRecoveryRepository, EventRepository, PersonRepository, SnapshotRepository, StatisticsRepository, UserRepository
 from app.services.container import ServiceContainer, get_service_container
 
 
@@ -52,6 +52,11 @@ async def get_user_repository() -> AsyncGenerator[UserRepository, None]:
 async def get_backup_repository() -> AsyncGenerator[BackupRepository, None]:
     async for session in get_session():
         yield BackupRepository(session)
+
+
+async def get_disaster_recovery_repository() -> AsyncGenerator[DisasterRecoveryRepository, None]:
+    async for session in get_session():
+        yield DisasterRecoveryRepository(session)
 
 
 def get_services() -> Generator[ServiceContainer, None, None]:

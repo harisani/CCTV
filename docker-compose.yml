@@ -1,6 +1,9 @@
 services:
   api:
-    build: .
+    build:
+      context: .
+      args:
+        TORCH_INDEX_URL: ${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cpu}
     env_file: .env
     ports:
       - "${API_PORT:-8000}:8000"
@@ -9,6 +12,8 @@ services:
         condition: service_healthy
     volumes:
       - ./storage:/service/storage
+      # Opsional: aktifkan mount NAS/offsite dan set DR_OFFSITE_PATH=/offsite/cctv.
+      # - /mnt/cctv-backup:/offsite/cctv
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
       interval: 10s

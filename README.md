@@ -10,6 +10,10 @@ PostgreSQL, serta menampilkan data melalui FastAPI dan dashboard React.
 2. Ubah minimal `POSTGRES_PASSWORD`, `JWT_SECRET`, dan `API_ADMIN_PASSWORD`.
 3. Jalankan: `docker compose up --build`.
 
+Image lokal memakai wheel PyTorch CPU agar Mac M1 tidak mengunduh library CUDA
+yang tidak dapat dipakai. Untuk server NVIDIA, atur `TORCH_INDEX_URL` ke index
+CUDA resmi yang sesuai dengan driver sebelum build.
+
 Compose menunggu PostgreSQL sehat, menjalankan `alembic upgrade head`, lalu
 menyalakan API dan dashboard. URL yang tersedia:
 
@@ -98,6 +102,75 @@ JPEG umumnya sudah terkompresi, sehingga ZIP lebih banyak menghemat ruang pada
 dataset JSON daripada pada snapshot. Kendali kapasitas utama tetap retention
 dan kebijakan pemindahan arsip ke storage eksternal.
 
+## Disaster Recovery penuh
+
+Backup observasional di atas tetap dipertahankan untuk pencarian histori. Untuk
+pemulihan server tersedia paket DR terpisah yang berisi:
+
+- dump PostgreSQL format custom dari `pg_dump` (termasuk user, kamera, URL RTSP,
+  embedding ReID, tracking, event, dan audit log);
+- isi folder `storage` termasuk snapshot dan metadata;
+- manifest dan checksum SHA-256 untuk setiap file;
+- enkripsi streaming AES-256-GCM dengan key yang diturunkan menggunakan scrypt.
+
+Aktifkan scheduler hanya setelah passphrase disimpan di secret manager:
+
+```dotenv
+ENABLE_DR_SCHEDULER=true
+DR_SCHEDULE_TIME=02:00
+DR_RETENTION_DAYS=14
+DR_ENCRYPTION_PASSPHRASE=ganti-dengan-secret-acak-minimal-16-karakter
+DR_INCLUDE_STORAGE=true
+DR_OFFSITE_PATH=/offsite/cctv
+DR_OFFSITE_REQUIRED=true
+DR_RESTORE_DATABASE_SUFFIX=_restore
+DR_ALLOW_IN_PLACE_RESTORE=false
+DR_COMMAND_TIMEOUT_SECONDS=3600
+```
+
+Mount NAS pada service `api` di `docker-compose.yml`, misalnya
+`/mnt/cctv-backup:/offsite/cctv`. Penyalinan offsite menggunakan file sementara,
+rename atomik, lalu verifikasi checksum. Jika `DR_OFFSITE_REQUIRED=true`, job
+dianggap gagal ketika salinan offsite gagal; kebijakan ini mencegah status sukses
+palsu saat backup hanya berada pada disk server yang sama.
+
+Endpoint `SUPER_ADMIN` berada di `/api/v1/disaster-recovery`:
+
+- `POST /` membuat DR manual;
+- `POST /import` mendaftarkan file `.dr.enc` dari offsite;
+- `POST /{id}/validate` mendekripsi dan memeriksa seluruh checksum;
+- `POST /{id}/restore` melakukan restore aman ke database `cctv_restore`;
+- `GET /{id}/download` mengunduh arsip terenkripsi.
+
+Restore melalui API memerlukan teks konfirmasi persis `RESTORE cctv_restore`.
+Database live tidak disentuh dan storage hasil restore ditempatkan di
+`storage/restores/<archive-id>` untuk diperiksa. Lakukan uji restore berkala;
+backup yang belum pernah berhasil direstore belum dapat dianggap tervalidasi.
+
+### Cutover pemulihan server
+
+Cutover live bersifat destruktif dan hanya boleh dilakukan saat API/dashboard
+sudah dihentikan. Simpan file `.dr.enc` pada mount terpisah, set
+`DR_ALLOW_IN_PLACE_RESTORE=true`, lalu jalankan container satu kali dengan
+entrypoint langsung agar migration startup tidak berjalan sebelum database
+dipulihkan:
+
+```bash
+docker compose stop api dashboard
+docker compose run --rm --no-deps --entrypoint python \
+  -v /lokasi/offsite:/recovery:ro api \
+  -m app.utils.dr_restore_cli \
+  --archive /recovery/cctv_dr_YYYYMMDD_HHMMSS_UUID.dr.enc \
+  --confirm "RESTORE LIVE cctv"
+docker compose up -d api dashboard
+```
+
+Perintah melakukan validasi dan dekripsi lebih dahulu, membuat ulang database,
+menjalankan `pg_restore`, lalu memulihkan storage. File storage lama yang berbeda
+dipindahkan ke `storage/pre-restore/<timestamp>` dan receipt pemulihan ditulis ke
+`storage/restores/live-<timestamp>.json`. Passphrase tidak pernah dimasukkan ke
+nama file, manifest, log, atau argumen perintah.
+
 ## Dashboard multi-kamera
 
 Dashboard mengambil hingga 200 kamera dari API, mengelompokkannya berdasarkan
@@ -152,15 +225,15 @@ app/
 ├── api/          HTTP routes, JWT, schema, DI, dan error handler
 ├── config/       Settings Pydantic dari .env
 ├── database/     Engine dan async SQLAlchemy session
-├── models/       Entitas ORM termasuk Camera, Event, User, dan BackupArchive
-├── repository/   Query dan persistensi per entitas, termasuk katalog backup
-├── services/     Kamera RTSP, RBAC, backup/import, scheduler, composition root
+├── models/       Entitas ORM termasuk Camera, Event, backup, dan katalog DR
+├── repository/   Query dan persistensi per entitas, termasuk katalog backup/DR
+├── services/     Kamera, RBAC, backup/DR terenkripsi, scheduler, composition root
 ├── detector/     Adapter YOLOv11
 ├── tracker/      Adapter ByteTrack + riwayat centroid
 ├── reid/         OSNet/TorchReID dan pencocokan embedding
 ├── storage/      Snapshot JPEG dan metadata JSON
 ├── dashboard/    WebSocket hub realtime
-└── utils/        Logging dan pengaturan runtime CPU/GPU
+└── utils/        Logging, runtime CPU/GPU, dan CLI cutover DR offline
 alembic/          Migrasi PostgreSQL
 dashboard/        React + Vite + Material UI
 tests/            Unit test tanpa RTSP, GPU, maupun database nyata

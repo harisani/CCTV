@@ -10,3 +10,4 @@ alembic>=1.14,<2.0
 torchreid>=0.2.5
 PyJWT>=2.9,<3.0
 python-multipart>=0.0.9,<1.0
+cryptography>=43.0,<46.0

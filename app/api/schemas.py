@@ -4,7 +4,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from urllib.parse import urlparse
-from app.models import BackupSource, BackupStatus, UserRole
+from app.models import BackupSource, BackupStatus, DisasterRecoveryStatus, UserRole
 
 T = TypeVar("T")
 
@@ -201,3 +201,24 @@ class ArchiveRecordPage(BaseModel):
     offset: int
     limit: int
     entity: str
+
+
+class DisasterRecoveryResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    status: DisasterRecoveryStatus
+    checksum_sha256: str | None
+    size_bytes: int | None
+    manifest: dict | None
+    offsite_path: str | None
+    offsite_checksum_sha256: str | None
+    restore_database: str | None
+    error_message: str | None
+    created_by_user_id: UUID | None
+    created_at: datetime
+    completed_at: datetime | None
+
+
+class DisasterRecoveryRestore(BaseModel):
+    confirmation: str = Field(min_length=1, max_length=160)

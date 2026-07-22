@@ -38,6 +38,14 @@ class BackupStatus(StrEnum):
     FAILED = "FAILED"
 
 
+class DisasterRecoveryStatus(StrEnum):
+    CREATING = "CREATING"
+    READY = "READY"
+    RESTORING = "RESTORING"
+    RESTORED = "RESTORED"
+    FAILED = "FAILED"
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -88,6 +96,31 @@ class BackupArchive(Base):
         ForeignKey("users.id", ondelete="SET NULL"), index=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, index=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class DisasterRecoveryArchive(Base):
+    __tablename__ = "disaster_recovery_archives"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    status: Mapped[DisasterRecoveryStatus] = mapped_column(
+        Enum(DisasterRecoveryStatus, name="disaster_recovery_status"), index=True
+    )
+    schedule_key: Mapped[str | None] = mapped_column(String(40), unique=True)
+    file_path: Mapped[str] = mapped_column(Text, unique=True)
+    checksum_sha256: Mapped[str | None] = mapped_column(String(64), unique=True, index=True)
+    size_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    manifest: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    offsite_path: Mapped[str | None] = mapped_column(Text)
+    offsite_checksum_sha256: Mapped[str | None] = mapped_column(String(64))
+    restore_database: Mapped[str | None] = mapped_column(String(128))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    created_by_user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, index=True
+    )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 

@@ -17,6 +17,7 @@ dependencies = [
     "opencv-python-headless>=4.10,<5.0",
     "PyJWT>=2.9,<3.0",
     "python-multipart>=0.0.9,<1.0",
+    "cryptography>=43.0,<46.0",
 ]
 
 [project.optional-dependencies]

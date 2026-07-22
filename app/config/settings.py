@@ -80,6 +80,22 @@ class Settings(BaseSettings):
     backup_max_members: int = Field(default=100_000, gt=0)
     backup_max_expansion_ratio: int = Field(default=100, ge=1)
 
+    # Full disaster recovery: encrypted PostgreSQL dump + storage files.
+    enable_dr_scheduler: bool = False
+    dr_schedule_time: str = Field(
+        default="02:00", pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$"
+    )
+    dr_retention_days: int = Field(default=14, gt=0)
+    dr_encryption_passphrase: str = Field(default="", repr=False)
+    dr_include_storage: bool = True
+    dr_offsite_path: str = ""
+    dr_offsite_required: bool = False
+    dr_restore_database_suffix: str = Field(
+        default="_restore", pattern=r"^_[a-zA-Z0-9_]+$"
+    )
+    dr_allow_in_place_restore: bool = False
+    dr_command_timeout_seconds: int = Field(default=3600, gt=0)
+
     camera_read_fps: float = Field(default=10.0, gt=0, le=120)
     camera_frame_width: int = Field(default=1280, gt=0)
     camera_frame_height: int = Field(default=720, gt=0)

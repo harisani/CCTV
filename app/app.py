@@ -15,6 +15,7 @@ from app.utils.logging import configure_logging
 from app.utils.runtime import configure_compute_runtime
 from app.services.user_service import ensure_bootstrap_admin
 from app.services.backup_scheduler import BackupScheduler
+from app.services.disaster_recovery_scheduler import DisasterRecoveryScheduler
 
 
 @asynccontextmanager
@@ -26,9 +27,13 @@ async def lifespan(_: FastAPI):
     await ensure_bootstrap_admin(SessionLocal, settings)
     camera_runtime: CameraRuntimeManager | None = None
     backup_scheduler: BackupScheduler | None = None
+    dr_scheduler: DisasterRecoveryScheduler | None = None
     if settings.enable_backup_scheduler:
         backup_scheduler = BackupScheduler(settings, SessionLocal)
         await backup_scheduler.start()
+    if settings.enable_dr_scheduler:
+        dr_scheduler = DisasterRecoveryScheduler(settings, SessionLocal)
+        await dr_scheduler.start()
     if settings.enable_camera_runtime:
         camera_runtime = CameraRuntimeManager(
             settings,
@@ -41,6 +46,8 @@ async def lifespan(_: FastAPI):
     finally:
         if backup_scheduler is not None:
             await backup_scheduler.stop()
+        if dr_scheduler is not None:
+            await dr_scheduler.stop()
         if camera_runtime is not None:
             await camera_runtime.stop()
         await engine.dispose()
