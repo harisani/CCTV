@@ -557,7 +557,15 @@ function App() {
             onStatusFilter={setStatusFilter}
             onToggle={toggleCamera}
           />
-          <LiveGrid cameras={selectedCameras} frames={frames} gridSize={gridSize} onGridSize={changeGridSize} />
+          <LiveGrid
+            cameras={selectedCameras}
+            frames={frames}
+            gridSize={gridSize}
+            onGridSize={changeGridSize}
+            token={token}
+            canConfigure={canAdminister}
+            onReloadCameras={loadCameras}
+          />
         </div>
       </section>
 

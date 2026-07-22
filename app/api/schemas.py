@@ -1,8 +1,8 @@
 from datetime import date, datetime
-from typing import Generic, TypeVar
+from typing import Generic, Literal, TypeVar
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from urllib.parse import urlparse
 from app.models import BackupSource, BackupStatus, DisasterRecoveryStatus, UserRole
 
@@ -109,6 +109,36 @@ class CameraConnectionResult(BaseModel):
     detail: str
 
 
+class CrossingPoint(BaseModel):
+    """Resolution-independent point expressed as a fraction of the video frame."""
+
+    x: float = Field(ge=0, le=1)
+    y: float = Field(ge=0, le=1)
+
+
+class CameraCrossingConfig(BaseModel):
+    enabled: bool = True
+    line_id: str = Field(default="main-door", min_length=1, max_length=100)
+    line_type: Literal["horizontal", "vertical", "polygon"] = "horizontal"
+    position: float | None = Field(default=0.5, ge=0, le=1)
+    enter_direction: Literal["up", "down", "left", "right"] = "down"
+    polygon_points: list[CrossingPoint] = Field(default_factory=list, max_length=20)
+
+    @model_validator(mode="after")
+    def validate_geometry(self) -> "CameraCrossingConfig":
+        if not self.enabled:
+            return self
+        if self.line_type in {"horizontal", "vertical"} and self.position is None:
+            raise ValueError("position is required for a horizontal or vertical line")
+        if self.line_type == "horizontal" and self.enter_direction not in {"up", "down"}:
+            raise ValueError("horizontal line direction must be up or down")
+        if self.line_type == "vertical" and self.enter_direction not in {"left", "right"}:
+            raise ValueError("vertical line direction must be left or right")
+        if self.line_type == "polygon" and len(self.polygon_points) < 3:
+            raise ValueError("polygon requires at least three points")
+        return self
+
+
 class CameraResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -124,6 +154,7 @@ class CameraResponse(BaseModel):
     last_error: str | None
     worker_id: str | None
     display_order: int
+    crossing_config: CameraCrossingConfig | None = None
     created_at: datetime
 
 

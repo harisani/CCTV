@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.exc import IntegrityError
 
 from app.api.dependencies import get_camera_repository
-from app.api.schemas import CameraConnectionResult, CameraConnectionTest, CameraCreate, CameraResponse, CameraUpdate, Page
+from app.api.schemas import CameraConnectionResult, CameraConnectionTest, CameraCreate, CameraCrossingConfig, CameraResponse, CameraUpdate, Page
 from app.api.security import require_authenticated_user, require_roles
 from app.models import Camera, User, UserRole
 from app.repository import AuditRepository, CameraRepository
@@ -142,3 +142,40 @@ async def test_camera_connection(
         height=result.height,
         detail=result.detail,
     )
+
+
+@router.get("/{camera_id}/crossing-config", response_model=CameraCrossingConfig | None)
+async def get_crossing_config(
+    camera_id: UUID,
+    repository: CameraRepository = Depends(get_camera_repository),
+) -> CameraCrossingConfig | None:
+    camera = await repository.get(camera_id)
+    if camera is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Camera not found")
+    return CameraCrossingConfig.model_validate(camera.crossing_config) if camera.crossing_config else None
+
+
+@router.put("/{camera_id}/crossing-config", response_model=CameraCrossingConfig)
+async def update_crossing_config(
+    camera_id: UUID,
+    payload: CameraCrossingConfig,
+    actor: User = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)),
+    repository: CameraRepository = Depends(get_camera_repository),
+) -> CameraCrossingConfig:
+    camera = await repository.get(camera_id)
+    if camera is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Camera not found")
+    camera.crossing_config = payload.model_dump(mode="json")
+    await AuditRepository(repository.session).record(
+        actor_user_id=actor.id,
+        action="CAMERA_CROSSING_CONFIG_UPDATED",
+        resource_type="camera",
+        resource_id=str(camera.id),
+        details={
+            "line_id": payload.line_id,
+            "line_type": payload.line_type,
+            "enabled": payload.enabled,
+        },
+    )
+    await repository.session.commit()
+    return payload

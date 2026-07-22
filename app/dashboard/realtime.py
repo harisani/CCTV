@@ -19,10 +19,15 @@ class DashboardHub:
         self._connections: dict[WebSocket, set[str]] = {}
         self._logger = logging.getLogger(__name__)
 
-    async def connect(self, websocket: WebSocket) -> None:
-        await websocket.accept()
+    async def connect(self, websocket: WebSocket) -> bool:
+        try:
+            await websocket.accept()
+        except RuntimeError:
+            self._logger.info("Dashboard disconnected before WebSocket handshake completed")
+            return False
         self._connections[websocket] = set()
         self._logger.info("Dashboard connected; clients=%s", len(self._connections))
+        return True
 
     def disconnect(self, websocket: WebSocket) -> None:
         self._connections.pop(websocket, None)

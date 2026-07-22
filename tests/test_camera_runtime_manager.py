@@ -71,6 +71,10 @@ class FakePipeline:
     def __init__(self) -> None:
         self.started = False
         self.stopped = False
+        self.crossing_configs: list[dict[str, object] | None] = []
+
+    def configure_crossing(self, config: dict[str, object] | None) -> None:
+        self.crossing_configs.append(config)
 
     async def start(self) -> None:
         self.started = True
@@ -127,6 +131,14 @@ class CameraRuntimeManagerTest(unittest.IsolatedAsyncioTestCase):
             name="AI Demo",
             location="Lobby",
             rtsp_url="rtsp://example/ai",
+            crossing_config={
+                "enabled": True,
+                "line_id": "door",
+                "line_type": "horizontal",
+                "position": 0.4,
+                "enter_direction": "down",
+                "polygon_points": [],
+            },
         )
         catalog = FakeCatalog(camera)
         hub = FakeHub()
@@ -146,12 +158,49 @@ class CameraRuntimeManagerTest(unittest.IsolatedAsyncioTestCase):
         await manager.stop()
 
         self.assertTrue(pipeline.started)
+        self.assertEqual(pipeline.crossing_configs[0]["position"], 0.4)
         self.assertTrue(pipeline.stopped)
         self.assertGreaterEqual(len(hub.events), 1)
         self.assertEqual(hub.events[0]["camera_name"], "AI Demo")
         self.assertEqual(hub.events[0]["camera_location"], "Lobby")
         self.assertIn(1, hub.occupancies)
         self.assertEqual(hub.frames[-1]["tracks"][0]["tracking_id"], 4)
+
+    async def test_refreshes_crossing_config_without_restarting_camera(self) -> None:
+        camera = SimpleNamespace(
+            id=uuid4(),
+            name="Door",
+            location="Lobby",
+            rtsp_url="rtsp://example/door",
+            crossing_config=None,
+        )
+        catalog = FakeCatalog(camera)
+        pipeline = FakePipeline()
+        manager = CameraRuntimeManager(
+            TestSettings(),
+            catalog,
+            FakeHub(),
+            camera_factory=lambda _camera_id, _url: FakeCameraService(),
+            jpeg_encoder=lambda _frame, _quality: b"jpeg",
+            pipeline_factory=lambda _camera_id: pipeline,
+        )
+
+        await manager.start()
+        await asyncio.sleep(0.05)
+        camera.crossing_config = {
+            "enabled": True,
+            "line_id": "new-door",
+            "line_type": "vertical",
+            "position": 0.65,
+            "enter_direction": "right",
+            "polygon_points": [],
+        }
+        await asyncio.sleep(0.06)
+        await manager.stop()
+
+        self.assertIn(camera.crossing_config, pipeline.crossing_configs)
+        self.assertTrue(pipeline.started)
+        self.assertTrue(pipeline.stopped)
 
 
 if __name__ == "__main__":

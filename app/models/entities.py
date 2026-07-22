@@ -140,6 +140,7 @@ class Camera(Base):
     last_error: Mapped[str | None] = mapped_column(Text)
     worker_id: Mapped[str | None] = mapped_column(String(100), index=True)
     display_order: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    crossing_config: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
     trackings: Mapped[list[Tracking]] = relationship(back_populates="camera", cascade="all, delete-orphan")

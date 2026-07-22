@@ -32,10 +32,14 @@ class VirtualLineConfig:
     enter_direction: Direction = "down"
     polygon_points: tuple[Point, ...] = ()
     max_inactive_frames: int = 300
+    enabled: bool = True
+    normalized: bool = False
 
     def __post_init__(self) -> None:
         if not self.line_id.strip():
             raise ValueError("line_id must not be empty")
+        if not self.enabled:
+            return
         if self.line_type in ("horizontal", "vertical") and self.position is None:
             raise ValueError("position is required for a horizontal or vertical line")
         if self.line_type == "horizontal" and self.enter_direction not in ("up", "down"):
@@ -57,6 +61,24 @@ class VirtualLineConfig:
             enter_direction=settings.crossing_enter_direction,
             polygon_points=points,
             max_inactive_frames=settings.crossing_max_inactive_frames,
+        )
+
+    @classmethod
+    def from_mapping(
+        cls, value: dict[str, Any], *, max_inactive_frames: int = 300
+    ) -> "VirtualLineConfig":
+        return cls(
+            line_id=str(value.get("line_id", "main-door")),
+            line_type=value.get("line_type", "horizontal"),
+            position=value.get("position"),
+            enter_direction=value.get("enter_direction", "down"),
+            polygon_points=tuple(
+                (float(point["x"]), float(point["y"]))
+                for point in value.get("polygon_points", [])
+            ),
+            max_inactive_frames=max_inactive_frames,
+            enabled=bool(value.get("enabled", True)),
+            normalized=True,
         )
 
 
@@ -85,11 +107,14 @@ class CrossingService:
         self._last_seen_frame: dict[int, int] = {}
         self._emitted_events: set[tuple[int, CrossingType]] = set()
         self._frame_number = 0
+        self._frame_size: tuple[int, int] | None = None
         self._logger = logging.getLogger(__name__)
 
     def process(self, tracks: Sequence[TrackedDetection]) -> list[CrossingEvent]:
         """Evaluate current tracks and return only new crossing events."""
         self._frame_number += 1
+        if not self._config.enabled:
+            return []
         events: list[CrossingEvent] = []
         for track in tracks:
             previous = self._last_positions.get(track.tracking_id)
@@ -124,10 +149,18 @@ class CrossingService:
         self._emitted_events.clear()
         self._frame_number = 0
 
+    def set_frame_size(self, width: int, height: int) -> None:
+        """Set the current source resolution used by normalized configurations."""
+        if width <= 0 or height <= 0:
+            raise ValueError("frame dimensions must be greater than zero")
+        self._frame_size = (width, height)
+
     def _crossing_type(self, previous: Point, current: Point) -> CrossingType | None:
+        position = self._scaled_position()
+        polygon_points = self._scaled_polygon()
         if self._config.line_type == "polygon":
-            was_inside = _point_in_polygon(previous, self._config.polygon_points)
-            is_inside = _point_in_polygon(current, self._config.polygon_points)
+            was_inside = _point_in_polygon(previous, polygon_points)
+            is_inside = _point_in_polygon(current, polygon_points)
             if not was_inside and is_inside:
                 return CrossingType.ENTER
             if was_inside and not is_inside:
@@ -135,14 +168,32 @@ class CrossingService:
             return None
 
         if self._config.line_type == "horizontal":
-            crossed = _opposite_sides(previous[1], current[1], self._config.position)
+            crossed = _opposite_sides(previous[1], current[1], position)
             direction = "down" if current[1] > previous[1] else "up"
         else:
-            crossed = _opposite_sides(previous[0], current[0], self._config.position)
+            crossed = _opposite_sides(previous[0], current[0], position)
             direction = "right" if current[0] > previous[0] else "left"
         if not crossed:
             return None
         return CrossingType.ENTER if direction == self._config.enter_direction else CrossingType.EXIT
+
+    def _scaled_position(self) -> float | None:
+        position = self._config.position
+        if position is None or not self._config.normalized:
+            return position
+        if self._frame_size is None:
+            raise RuntimeError("frame size must be set before processing normalized geometry")
+        width, height = self._frame_size
+        dimension = height if self._config.line_type == "horizontal" else width
+        return position * dimension
+
+    def _scaled_polygon(self) -> tuple[Point, ...]:
+        if not self._config.normalized:
+            return self._config.polygon_points
+        if self._frame_size is None:
+            raise RuntimeError("frame size must be set before processing normalized geometry")
+        width, height = self._frame_size
+        return tuple((x * width, y * height) for x, y in self._config.polygon_points)
 
     def _remove_inactive_tracks(self) -> None:
         expiry_frame = self._frame_number - self._config.max_inactive_frames

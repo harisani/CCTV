@@ -570,6 +570,29 @@ a,
   white-space: nowrap;
 }
 
+.camera-tile__actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.camera-tile__actions .MuiIconButton-root {
+  border: var(--rule-thin) solid var(--color-graphite-3);
+  border-radius: var(--radius-xs);
+  color: var(--color-graphite-muted);
+  transition: background-color var(--dur-short) var(--ease-out), color var(--dur-short) var(--ease-out), transform var(--dur-micro) var(--ease-out);
+}
+
+.camera-tile__actions .MuiIconButton-root:hover {
+  background: var(--color-graphite-3);
+  color: var(--color-graphite-ink);
+}
+
+.camera-tile__actions .MuiIconButton-root:active {
+  transform: translateY(1px);
+}
+
 .camera-tile__identity strong {
   color: var(--color-graphite-ink);
   font-size: var(--text-sm);
@@ -584,7 +607,7 @@ a,
   position: relative;
   display: grid;
   min-height: 12rem;
-  aspect-ratio: 16 / 9;
+  aspect-ratio: var(--frame-ratio, 16 / 9);
   place-items: center;
   overflow: clip;
   background: var(--color-graphite);
@@ -612,6 +635,7 @@ a,
   height: var(--track-h);
   border: 2px solid var(--color-success);
   pointer-events: none;
+  z-index: var(--z-raised);
 }
 
 .tracking-box span {
@@ -642,6 +666,150 @@ a,
   color: var(--color-graphite-ink);
   font-family: var(--font-mono);
   font-size: var(--text-xs);
+  z-index: var(--z-raised);
+}
+
+.crossing-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: calc(var(--z-raised) - 1);
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.crossing-overlay line,
+.crossing-overlay polygon {
+  fill: var(--color-warning-soft);
+  fill-opacity: 0.12;
+  stroke: var(--color-error-signal);
+  stroke-width: 0.006;
+  stroke-dasharray: 0.018 0.01;
+  vector-effect: non-scaling-stroke;
+}
+
+.crossing-overlay circle {
+  fill: var(--color-error-signal);
+  stroke: var(--color-graphite);
+  stroke-width: 0.004;
+  vector-effect: non-scaling-stroke;
+}
+
+.crossing-overlay--editable line,
+.crossing-overlay--editable polygon {
+  stroke-width: 0.008;
+}
+
+.crossing-dialog .MuiPaper-root {
+  background: var(--color-paper);
+  color: var(--color-ink-2);
+}
+
+.crossing-dialog__intro {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  margin-block-end: var(--space-md);
+}
+
+.crossing-dialog__intro p {
+  max-width: 48rem;
+  margin: 0;
+  color: var(--color-muted);
+}
+
+.crossing-editor-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(15rem, 1fr);
+  gap: var(--space-lg);
+  margin-block-start: var(--space-md);
+}
+
+.crossing-stage {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  aspect-ratio: var(--crossing-ratio, 16 / 9);
+  place-items: center;
+  overflow: clip;
+  border: var(--rule-thin) solid var(--color-graphite-3);
+  border-radius: var(--radius-sm);
+  background: var(--color-graphite);
+  cursor: crosshair;
+  touch-action: none;
+  user-select: none;
+}
+
+.crossing-stage[data-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.crossing-stage img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.crossing-stage__empty {
+  max-width: 26rem;
+  padding: var(--space-lg);
+  color: var(--color-graphite-muted);
+  text-align: center;
+}
+
+.crossing-stage__hint {
+  position: absolute;
+  inset-block-start: var(--space-sm);
+  inset-inline-end: var(--space-sm);
+  z-index: var(--z-raised);
+  padding: var(--space-2xs) var(--space-xs);
+  border: var(--rule-thin) solid var(--color-graphite-3);
+  border-radius: var(--radius-xs);
+  background: var(--color-frame-overlay);
+  color: var(--color-graphite-ink);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  pointer-events: none;
+}
+
+.crossing-controls {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.crossing-controls .MuiToggleButton-root {
+  min-width: 0;
+  border-color: var(--color-rule-2);
+  color: var(--color-ink-2);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.crossing-controls .MuiToggleButton-root.Mui-selected {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+}
+
+.crossing-controls__note {
+  margin: 0;
+  padding: var(--space-sm);
+  border-inline-start: 2px solid var(--color-accent);
+  background: var(--color-paper-2);
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+}
+
+.crossing-controls__actions {
+  display: flex;
+  gap: var(--space-xs);
 }
 
 .live-empty {
@@ -1535,7 +1703,31 @@ a,
   }
 }
 
+@media (max-width: 48rem) {
+  .crossing-dialog__intro {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .crossing-editor-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 @media (max-width: 39.99rem) {
+  .crossing-dialog__intro {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .crossing-editor-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .crossing-controls .MuiToggleButton-root {
+    padding-inline: var(--space-xs);
+  }
+
   .ledger-table thead {
     display: none;
   }

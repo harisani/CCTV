@@ -1,5 +1,8 @@
-import { ToggleButton, ToggleButtonGroup } from '@mui/material'
+import { IconButton, Tooltip, ToggleButton, ToggleButtonGroup } from '@mui/material'
 import VideocamOffIcon from '@mui/icons-material/VideocamOff'
+import PolylineOutlinedIcon from '@mui/icons-material/PolylineOutlined'
+import { useState } from 'react'
+import CrossingConfigDialog, { CrossingOverlay } from './CrossingConfigDialog'
 
 function CameraStatus({ status }) {
   return <span className="status-label">
@@ -8,16 +11,21 @@ function CameraStatus({ status }) {
   </span>
 }
 
-function CameraTile({ camera, frame }) {
+function CameraTile({ camera, frame, canConfigure, onConfigure }) {
   return <figure className="camera-tile">
     <figcaption className="camera-tile__head">
       <span className="camera-tile__identity">
         <strong>{camera.name}</strong>
         <span>{camera.location || camera.zone || 'Lokasi belum diisi'}</span>
       </span>
-      <CameraStatus status={camera.effectiveStatus} />
+      <span className="camera-tile__actions">
+        {canConfigure && <Tooltip title="Atur garis atau polygon" enterDelay={800}>
+          <IconButton size="small" onClick={() => onConfigure(camera)} aria-label={`Atur area crossing ${camera.name}`}><PolylineOutlinedIcon fontSize="small" /></IconButton>
+        </Tooltip>}
+        <CameraStatus status={camera.effectiveStatus} />
+      </span>
     </figcaption>
-    <div className="camera-frame">
+    <div className="camera-frame" style={{ '--frame-ratio': frame?.width && frame?.height ? `${frame.width} / ${frame.height}` : '16 / 9' }}>
       {!frame && <div className="camera-frame__empty"><VideocamOffIcon /><span>Menunggu frame realtime</span></div>}
       {frame && <img
         src={`data:image/jpeg;base64,${frame.image}`}
@@ -36,12 +44,14 @@ function CameraTile({ camera, frame }) {
           <span>ID {track.tracking_id} · {track.direction || 'STATIONARY'}</span>
         </span>
       })}
+      <CrossingOverlay config={camera.crossing_config} />
       {frame && <span className="frame-count">{frame.tracks?.length || 0} orang</span>}
     </div>
   </figure>
 }
 
-export default function LiveGrid({ cameras, frames, gridSize, onGridSize }) {
+export default function LiveGrid({ cameras, frames, gridSize, onGridSize, token, canConfigure = false, onReloadCameras }) {
+  const [editingCamera, setEditingCamera] = useState(null)
   const columns = gridSize === 1 ? 1 : gridSize === 4 ? 2 : gridSize === 9 ? 3 : 4
   return <section className="live-monitor" aria-labelledby="live-monitor-title">
     <div className="live-monitor__toolbar">
@@ -61,8 +71,16 @@ export default function LiveGrid({ cameras, frames, gridSize, onGridSize }) {
       </ToggleButtonGroup>
     </div>
     <div className={`camera-grid camera-grid--${columns}`}>
-      {cameras.map(camera => <CameraTile key={camera.id} camera={camera} frame={frames[camera.id]} />)}
+      {cameras.map(camera => <CameraTile key={camera.id} camera={camera} frame={frames[camera.id]} canConfigure={canConfigure} onConfigure={setEditingCamera} />)}
       {!cameras.length && <div className="live-empty"><p>Pilih kamera dari daftar untuk mulai menerima frame realtime.</p></div>}
     </div>
+    {editingCamera && <CrossingConfigDialog
+      camera={editingCamera}
+      frame={frames[editingCamera.id]}
+      token={token}
+      open
+      onClose={() => setEditingCamera(null)}
+      onSaved={onReloadCameras}
+    />}
   </section>
 }

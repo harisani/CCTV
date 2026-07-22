@@ -14,7 +14,7 @@ from uuid import UUID
 from app.detector import DetectorService
 from app.reid import PersonReIdentificationService
 from app.repository import PipelineRepository
-from app.services.crossing_service import CrossingEvent, CrossingService
+from app.services.crossing_service import CrossingEvent, CrossingService, VirtualLineConfig
 from app.storage import SnapshotResult, SnapshotService
 from app.tracker import TrackedDetection, TrackingService
 
@@ -85,6 +85,26 @@ class CameraRealtimePipeline:
         self._person_ids.clear()
         self._last_seen_frame.clear()
 
+    def configure_crossing(self, config: dict[str, Any] | None) -> None:
+        """Replace crossing geometry while preserving detector and model instances."""
+        if config is None:
+            crossing = CrossingService(settings=self._settings)
+        else:
+            crossing = CrossingService(
+                VirtualLineConfig.from_mapping(
+                    config,
+                    max_inactive_frames=self._settings.crossing_max_inactive_frames,
+                )
+            )
+        self._crossing.reset()
+        self._crossing = crossing
+        self._logger.info(
+            "Crossing configuration applied line=%s type=%s enabled=%s",
+            crossing._config.line_id,
+            crossing._config.line_type,
+            crossing._config.enabled,
+        )
+
     async def process(
         self, frame: Any, *, captured_at: datetime | None = None
     ) -> PipelineFrame:
@@ -107,6 +127,9 @@ class CameraRealtimePipeline:
         tracks = await asyncio.to_thread(self._tracker.update, people)
         await self._register_new_tracks(frame, tracks, captured_at)
         await self._persist_centroids_if_due(tracks, now)
+        shape = getattr(frame, "shape", None)
+        if shape is not None and len(shape) >= 2:
+            self._crossing.set_frame_size(int(shape[1]), int(shape[0]))
         events = self._crossing.process(tracks)
         published_events = retried_events + await self._handle_crossings(
             frame, tracks, events

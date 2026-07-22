@@ -15,7 +15,19 @@ class FakeWebSocket:
         self.messages.append(message)
 
 
+class DisconnectedWebSocket(FakeWebSocket):
+    async def accept(self) -> None:
+        raise RuntimeError("client disconnected")
+
+
 class DashboardHubTest(unittest.IsolatedAsyncioTestCase):
+    async def test_disconnect_during_handshake_is_not_registered(self) -> None:
+        hub = DashboardHub()
+        websocket = DisconnectedWebSocket()
+
+        self.assertFalse(await hub.connect(websocket))
+        self.assertFalse(hub.has_subscribers("camera-a"))
+
     async def test_frames_only_reach_subscribed_dashboard(self) -> None:
         hub = DashboardHub()
         first = FakeWebSocket()

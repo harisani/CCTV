@@ -27,7 +27,8 @@ async def dashboard_websocket(websocket: WebSocket) -> None:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid token")
         return
 
-    await dashboard_hub.connect(websocket)
+    if not await dashboard_hub.connect(websocket):
+        return
     try:
         while True:
             message = await websocket.receive_json()

@@ -245,6 +245,34 @@ REID_MIN_CROP_HEIGHT=64
 Untuk Mac M1/CPU mulai dari `AI_PIPELINE_FPS=2` dan concurrency `1`. Untuk GPU,
 naikkan FPS dan concurrency secara bertahap sambil memantau VRAM serta latency.
 
+### Garis crossing per kamera
+
+Admin dan super admin dapat memilih kamera pada **Live workbench**, lalu menekan
+ikon garis pada header feed. Editor mendukung:
+
+- garis horizontal dengan arah masuk atas/bawah;
+- garis vertical dengan arah masuk kiri/kanan;
+- polygon dengan event `ENTER` saat centroid berpindah dari luar ke dalam dan
+  `EXIT` saat berpindah dari dalam ke luar;
+- aktivasi/nonaktivasi crossing tanpa menghapus geometri.
+
+Koordinat disimpan dalam rentang relatif `0..1`, sehingga konfigurasi tetap
+berlaku ketika resolusi stream berubah. Worker kamera mengambil perubahan dari
+PostgreSQL dan mengganti state crossing tanpa memuat ulang YOLO, ByteTrack, atau
+OSNet. Perubahan biasanya aktif dalam waktu maksimal
+`CAMERA_SYNC_INTERVAL_SECONDS` dan dicatat pada audit log.
+
+Endpoint terkait:
+
+```text
+GET /api/v1/camera/{camera_id}/crossing-config
+PUT /api/v1/camera/{camera_id}/crossing-config  # ADMIN / SUPER_ADMIN
+```
+
+Kamera yang belum mempunyai konfigurasi masih memakai nilai crossing global
+dari `.env` untuk kompatibilitas dengan instalasi sebelumnya. Setelah konfigurasi
+disimpan dari dashboard, konfigurasi per kamera menjadi sumber utama.
+
 Hentikan layanan dengan `docker compose down`. Tambahkan `-v` hanya bila data
 PostgreSQL memang ingin dihapus.
 

@@ -27,6 +27,7 @@ class _CameraRuntime:
     rtsp_url: str
     service: CameraService
     location: str | None = None
+    crossing_config: dict[str, Any] | None = None
     pipeline: CameraRealtimePipeline | None = None
     last_ai_frame: int = 0
     last_tracks: list[dict[str, Any]] | None = None
@@ -131,13 +132,24 @@ class CameraRuntimeManager:
                 await self._report_health(runtime, "OFFLINE", None, None, force=True)
 
         for camera_id, camera in definitions.items():
+            crossing_config = getattr(camera, "crossing_config", None)
             if camera_id in self._runtimes:
+                runtime = self._runtimes[camera_id]
+                runtime.name = camera.name
+                runtime.location = getattr(camera, "location", None)
+                if crossing_config != runtime.crossing_config:
+                    if runtime.pipeline is not None and hasattr(runtime.pipeline, "configure_crossing"):
+                        runtime.pipeline.configure_crossing(crossing_config)
+                    runtime.crossing_config = crossing_config
+                    self._logger.info("Crossing configuration refreshed camera_id=%s", camera_id)
                 continue
             service = self._camera_factory(str(camera_id), camera.rtsp_url)
             pipeline = None
             if self._pipeline_factory is not None:
                 try:
                     pipeline = self._pipeline_factory(camera_id)
+                    if hasattr(pipeline, "configure_crossing"):
+                        pipeline.configure_crossing(crossing_config)
                     await pipeline.start()
                 except Exception:
                     pipeline = None
@@ -150,6 +162,7 @@ class CameraRuntimeManager:
                 camera.rtsp_url,
                 service,
                 location=getattr(camera, "location", None),
+                crossing_config=crossing_config,
                 pipeline=pipeline,
                 last_tracks=[],
             )
