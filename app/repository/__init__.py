@@ -9,5 +9,6 @@ from app.repository.statistics_repository import StatisticsRepository
 from app.repository.tracking_repository import TrackingRepository
 from app.repository.user_repository import UserRepository
 from app.repository.audit_repository import AuditRepository
+from app.repository.backup_repository import BackupRepository
 
-__all__ = ["AuditRepository", "CameraRepository", "CameraRuntimeRepository", "EventRepository", "PersonRepository", "SnapshotRepository", "StatisticsRepository", "TrackingRepository", "UserRepository"]
+__all__ = ["AuditRepository", "BackupRepository", "CameraRepository", "CameraRuntimeRepository", "EventRepository", "PersonRepository", "SnapshotRepository", "StatisticsRepository", "TrackingRepository", "UserRepository"]

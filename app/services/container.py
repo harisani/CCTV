@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from functools import cached_property
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from app.detector import DetectorService
 from app.reid import PersonReIdentificationService
@@ -11,10 +11,6 @@ from app.services.camera_service import CameraService
 from app.services.crossing_service import CrossingService
 from app.storage import SnapshotService
 from app.tracker import TrackingService
-
-if TYPE_CHECKING:
-    from app.config.settings import Settings
-
 
 class ServiceContainer:
     """Construct services at the system boundary, not inside domain logic."""

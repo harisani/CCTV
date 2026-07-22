@@ -5,8 +5,6 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from uuid import UUID
-
 from fastapi import HTTPException, status
 
 from app.models import User, UserRole

@@ -26,13 +26,13 @@ scrypt di PostgreSQL, bukan kembali ke `.env`.
 
 Menu **Administrasi** tersedia setelah login. Pembagian akses saat ini:
 
-| Role | Monitoring & histori | Kelola kamera | Kelola pengguna |
-| --- | --- | --- | --- |
-| `SUPER_ADMIN` | Ya | Ya | Ya |
-| `ADMIN` | Ya | Ya | Tidak |
-| `SUPERVISOR` | Ya | Tidak | Tidak |
-| `OPERATOR` | Ya | Tidak | Tidak |
-| `AUDITOR` | Ya | Tidak | Tidak |
+| Role | Monitoring & histori | Kelola kamera | Kelola pengguna | Backup & arsip |
+| --- | --- | --- | --- | --- |
+| `SUPER_ADMIN` | Ya | Ya | Ya | Ya |
+| `ADMIN` | Ya | Ya | Tidak | Tidak |
+| `SUPERVISOR` | Ya | Tidak | Tidak | Tidak |
+| `OPERATOR` | Ya | Tidak | Tidak | Tidak |
+| `AUDITOR` | Ya | Tidak | Tidak | Tidak |
 
 Super admin dapat membuat pengguna, mengubah role/status, dan mereset password
 pengguna lain. Password sementara minimal 12 karakter dan wajib diganti oleh
@@ -44,6 +44,59 @@ Setiap perubahan pengguna atau kamera dicatat di tabel `audit_logs`. Tindakan
 DELETE kamera bersifat aman: kamera dinonaktifkan dari runtime, sedangkan
 tracking, event, dan snapshot historis tetap disimpan. Kamera dapat diaktifkan
 kembali dari form **Ubah konfigurasi kamera**.
+
+## Backup harian dan import arsip
+
+Scheduler membuat backup observasional setiap hari pada `BACKUP_SCHEDULE_TIME`
+menurut `BACKUP_TIMEZONE`. Default `00:15 Asia/Jakarta` berarti backup untuk
+tanggal kemarin dibuat 15 menit setelah pergantian hari. File tersimpan pada
+volume persisten:
+
+```text
+storage/backups/YYYY/MM/YYYYMMDD_<uuid>.zip
+```
+
+ZIP memuat `manifest.json`, dataset JSON Lines, snapshot JPEG, dan metadata
+snapshot. Setiap member memiliki checksum SHA-256. File dibuat secara atomik;
+job yang terputus akibat restart ditandai `FAILED` saat startup dan dapat dibuat
+ulang secara manual. Backup otomatis yang lebih tua dari
+`BACKUP_RETENTION_DAYS` dibersihkan, sedangkan arsip yang di-import tidak ikut
+dihapus oleh retention.
+
+Menu **Administrasi → Backup & arsip** hanya tersedia bagi `SUPER_ADMIN` dan
+menyediakan:
+
+- pembuatan backup manual untuk tanggal tertentu;
+- unduh ZIP;
+- import ZIP dengan pemeriksaan ukuran, path traversal, symbolic link,
+  compression bomb, struktur manifest, dan checksum;
+- penelusuran event, tracking, person, kamera, pengguna, audit log, serta
+  preview snapshot langsung dari ZIP.
+
+Import bersifat **baca-saja**: arsip masuk ke katalog terisolasi dan tidak
+menimpa database operasional. URL RTSP, embedding ReID, hash password, dan data
+pengamanan sesi sengaja tidak dimasukkan. Karena itu fitur ini tepat untuk
+melihat kembali histori, tetapi belum menggantikan disaster-recovery database
+penuh. Salin folder `storage/backups` ke media/server lain bila diperlukan;
+backup yang hanya berada pada server yang sama tidak melindungi dari kegagalan
+disk.
+
+Konfigurasi terkait:
+
+```dotenv
+ENABLE_BACKUP_SCHEDULER=true
+BACKUP_SCHEDULE_TIME=00:15
+BACKUP_TIMEZONE=Asia/Jakarta
+BACKUP_RETENTION_DAYS=30
+BACKUP_INCLUDE_SNAPSHOTS=true
+BACKUP_MAX_UPLOAD_MB=2048
+BACKUP_MAX_MEMBERS=100000
+BACKUP_MAX_EXPANSION_RATIO=100
+```
+
+JPEG umumnya sudah terkompresi, sehingga ZIP lebih banyak menghemat ruang pada
+dataset JSON daripada pada snapshot. Kendali kapasitas utama tetap retention
+dan kebijakan pemindahan arsip ke storage eksternal.
 
 ## Dashboard multi-kamera
 
@@ -99,9 +152,9 @@ app/
 ├── api/          HTTP routes, JWT, schema, DI, dan error handler
 ├── config/       Settings Pydantic dari .env
 ├── database/     Engine dan async SQLAlchemy session
-├── models/       Entitas ORM termasuk Camera, Person, Event, User, AuditLog
-├── repository/   Query dan persistensi per entitas
-├── services/     Kamera RTSP, user/RBAC, uji koneksi, dan composition root
+├── models/       Entitas ORM termasuk Camera, Event, User, dan BackupArchive
+├── repository/   Query dan persistensi per entitas, termasuk katalog backup
+├── services/     Kamera RTSP, RBAC, backup/import, scheduler, composition root
 ├── detector/     Adapter YOLOv11
 ├── tracker/      Adapter ByteTrack + riwayat centroid
 ├── reid/         OSNet/TorchReID dan pencocokan embedding
@@ -113,4 +166,3 @@ dashboard/        React + Vite + Material UI
 tests/            Unit test tanpa RTSP, GPU, maupun database nyata
 docker/           Entrypoint container untuk migrasi otomatis
 ```
-# CCTV

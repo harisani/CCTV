@@ -10,7 +10,7 @@ from app.storage import SnapshotService
 from app.tracker import TrackedDetection
 
 
-class TestSettings:
+class SnapshotSettings:
     def __init__(self, root: str) -> None:
         self.storage_path = root
         self.snapshot_jpeg_quality = 95
@@ -46,7 +46,7 @@ class SnapshotServiceTest(unittest.TestCase):
             occurred_at = datetime(2026, 7, 21, 10, 30, 40, tzinfo=UTC)
             event = CrossingEvent(uuid4(), CrossingType.ENTER, "door", 9, (50, 60), occurred_at)
             person = TrackedDetection(9, (10, 20, 90, 160), 0.9, 0, "person", (50, 60), "down", ())
-            result = SnapshotService(TestSettings(directory), cv2_module=FakeCv2).save(
+            result = SnapshotService(SnapshotSettings(directory), cv2_module=FakeCv2).save(
                 FakeFrame(), event, person, camera_id="camera-a"
             )
 

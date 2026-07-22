@@ -69,6 +69,17 @@ class Settings(BaseSettings):
     login_max_failed_attempts: int = Field(default=5, gt=0)
     login_lock_minutes: int = Field(default=15, gt=0)
 
+    enable_backup_scheduler: bool = True
+    backup_schedule_time: str = Field(
+        default="00:15", pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$"
+    )
+    backup_timezone: str = "Asia/Jakarta"
+    backup_retention_days: int = Field(default=30, gt=0)
+    backup_include_snapshots: bool = True
+    backup_max_upload_mb: int = Field(default=2048, gt=0)
+    backup_max_members: int = Field(default=100_000, gt=0)
+    backup_max_expansion_ratio: int = Field(default=100, ge=1)
+
     camera_read_fps: float = Field(default=10.0, gt=0, le=120)
     camera_frame_width: int = Field(default=1280, gt=0)
     camera_frame_height: int = Field(default=720, gt=0)

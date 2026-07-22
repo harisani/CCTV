@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from enum import StrEnum
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import JSON, Boolean, DateTime, Enum, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Date, JSON, Boolean, DateTime, Enum, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.base import Base
@@ -24,6 +24,18 @@ class UserRole(StrEnum):
     SUPERVISOR = "SUPERVISOR"
     OPERATOR = "OPERATOR"
     AUDITOR = "AUDITOR"
+
+
+class BackupSource(StrEnum):
+    AUTOMATIC = "AUTOMATIC"
+    MANUAL = "MANUAL"
+    IMPORT = "IMPORT"
+
+
+class BackupStatus(StrEnum):
+    CREATING = "CREATING"
+    READY = "READY"
+    FAILED = "FAILED"
 
 
 class User(Base):
@@ -54,6 +66,29 @@ class AuditLog(Base):
     resource_id: Mapped[str | None] = mapped_column(String(100), index=True)
     details: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, index=True)
+
+
+class BackupArchive(Base):
+    __tablename__ = "backup_archives"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    source: Mapped[BackupSource] = mapped_column(Enum(BackupSource, name="backup_source"), index=True)
+    status: Mapped[BackupStatus] = mapped_column(Enum(BackupStatus, name="backup_status"), index=True)
+    backup_date: Mapped[date] = mapped_column(Date, index=True)
+    schedule_key: Mapped[str | None] = mapped_column(String(40), unique=True)
+    original_filename: Mapped[str | None] = mapped_column(String(255))
+    file_path: Mapped[str] = mapped_column(Text, unique=True)
+    checksum_sha256: Mapped[str | None] = mapped_column(String(64), unique=True, index=True)
+    size_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    schema_version: Mapped[int] = mapped_column(Integer, default=1)
+    record_counts: Mapped[dict[str, int] | None] = mapped_column(JSON)
+    manifest: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    created_by_user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, index=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Camera(Base):

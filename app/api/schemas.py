@@ -1,10 +1,10 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Generic, TypeVar
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from urllib.parse import urlparse
-from app.models import UserRole
+from app.models import BackupSource, BackupStatus, UserRole
 
 T = TypeVar("T")
 
@@ -171,3 +171,33 @@ class StatisticsResponse(BaseModel):
     total_cameras: int
     total_snapshots: int
     current_person_count: int
+
+
+class BackupCreate(BaseModel):
+    backup_date: date | None = None
+
+
+class BackupArchiveResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    source: BackupSource
+    status: BackupStatus
+    backup_date: date
+    original_filename: str | None
+    checksum_sha256: str | None
+    size_bytes: int | None
+    schema_version: int
+    record_counts: dict[str, int] | None
+    error_message: str | None
+    created_by_user_id: UUID | None
+    created_at: datetime
+    completed_at: datetime | None
+
+
+class ArchiveRecordPage(BaseModel):
+    items: list[dict]
+    total: int
+    offset: int
+    limit: int
+    entity: str

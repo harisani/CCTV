@@ -21,6 +21,7 @@ import EditOutlinedIcon from '@mui/icons-material/EditOutlined'
 import KeyOutlinedIcon from '@mui/icons-material/KeyOutlined'
 import WifiTetheringIcon from '@mui/icons-material/WifiTethering'
 import { api } from '../api'
+import BackupAdministration from './BackupAdministration'
 
 const roles = ['SUPER_ADMIN', 'ADMIN', 'SUPERVISOR', 'OPERATOR', 'AUDITOR']
 const roleLabel = value => value?.replaceAll('_', ' ') || '—'
@@ -240,9 +241,10 @@ export default function Administration({ token, currentUser, cameras, onReloadCa
     </section>
     {error && <Alert className="error-banner" severity="error" onClose={() => setError('')}>{error}</Alert>}
     {notice && <Alert className="error-banner" severity="success" onClose={() => setNotice('')}>{notice}</Alert>}
-    <Tabs className="admin-tabs" value={section} onChange={(_, value) => setSection(value)}>
+    <Tabs className="admin-tabs" value={section} onChange={(_, value) => setSection(value)} variant="scrollable" scrollButtons="auto">
       <Tab value="cameras" label="Kamera" />
       {canManageUsers && <Tab value="users" label="Pengguna & role" />}
+      {canManageUsers && <Tab value="backups" label="Backup & arsip" />}
     </Tabs>
 
     {section === 'cameras' && <section className="admin-section">
@@ -259,6 +261,8 @@ export default function Administration({ token, currentUser, cameras, onReloadCa
         {users.map(user => <tr key={user.id}><td data-label="Pengguna"><strong>{user.full_name}</strong><span className="table-secondary">@{user.username}</span></td><td data-label="Role"><Chip size="small" label={roleLabel(user.role)} /></td><td data-label="Status">{user.is_active ? 'Aktif' : 'Nonaktif'}</td><td data-label="Login terakhir">{user.last_login_at ? new Date(user.last_login_at).toLocaleString('id-ID') : 'Belum pernah'}</td><td data-label="Aksi"><div className="row-actions"><Button size="small" startIcon={<EditOutlinedIcon />} onClick={() => setUserDialog({ open: true, user })}>Ubah</Button>{user.id !== currentUser?.id && <Button size="small" startIcon={<KeyOutlinedIcon />} onClick={() => setResetTarget(user)}>Reset</Button>}</div></td></tr>)}
       </tbody></table></div>
     </section>}
+
+    {section === 'backups' && canManageUsers && <BackupAdministration token={token} />}
 
     <CameraDialog open={cameraDialog.open} camera={cameraDialog.camera} token={token} onClose={() => setCameraDialog({ open: false, camera: null })} onSaved={onReloadCameras} />
     <UserDialog open={userDialog.open} user={userDialog.user} token={token} onClose={() => setUserDialog({ open: false, user: null })} onSaved={loadUsers} />
