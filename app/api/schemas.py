@@ -132,6 +132,7 @@ class EventResponse(BaseModel):
 
     id: UUID
     tracking_id: UUID
+    byte_track_id: int | None = None
     event_type: str
     line_id: str
     centroid: dict[str, float]

@@ -26,6 +26,27 @@ class TrackedDetection:
     history: tuple[tuple[float, float], ...]
 
 
+@dataclass(frozen=True, slots=True)
+class _TrackerInput:
+    """Minimal Ultralytics Results-like detection collection."""
+
+    xyxy: Any
+    xywh: Any
+    conf: Any
+    cls: Any
+
+    def __len__(self) -> int:
+        return len(self.conf)
+
+    def __getitem__(self, index: Any) -> "_TrackerInput":
+        return _TrackerInput(
+            xyxy=self.xyxy[index],
+            xywh=self.xywh[index],
+            conf=self.conf[index],
+            cls=self.cls[index],
+        )
+
+
 TrackerFactory = Callable[[Any, int], Any]
 ArrayFactory = Callable[[list[Any]], Any]
 
@@ -90,10 +111,20 @@ class TrackingService:
             fuse_score=True,
         )
 
-    def _to_tracker_input(self, detections: Sequence[Detection]) -> SimpleNamespace:
+    def _to_tracker_input(self, detections: Sequence[Detection]) -> _TrackerInput:
         boxes = [list(detection.bbox) for detection in detections]
-        return SimpleNamespace(
+        xywh = [
+            [
+                (x1 + x2) / 2,
+                (y1 + y2) / 2,
+                x2 - x1,
+                y2 - y1,
+            ]
+            for x1, y1, x2, y2 in (detection.bbox for detection in detections)
+        ]
+        return _TrackerInput(
             xyxy=self._array_factory(boxes),
+            xywh=self._array_factory(xywh),
             conf=self._array_factory([detection.confidence for detection in detections]),
             cls=self._array_factory([detection.class_id for detection in detections]),
         )
@@ -156,7 +187,21 @@ class TrackingService:
             from ultralytics.trackers.byte_tracker import BYTETracker
         except ImportError as error:
             raise RuntimeError("Install Ultralytics to use ByteTrack") from error
-        return BYTETracker(arguments, frame_rate=frame_rate)
+        return TrackingService._instantiate_bytetracker(
+            BYTETracker, arguments, frame_rate
+        )
+
+    @staticmethod
+    def _instantiate_bytetracker(
+        tracker_type: type[Any], arguments: Any, frame_rate: int
+    ) -> Any:
+        """Support Ultralytics releases with and without ``frame_rate``."""
+        import inspect
+
+        parameters = inspect.signature(tracker_type).parameters
+        if "frame_rate" in parameters:
+            return tracker_type(arguments, frame_rate=frame_rate)
+        return tracker_type(arguments)
 
     @staticmethod
     def _numpy_array(values: list[Any]) -> Any:

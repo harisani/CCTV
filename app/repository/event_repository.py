@@ -32,7 +32,7 @@ class EventRepository(BaseRepository[Event]):
         end_at: datetime | None = None,
         offset: int = 0,
         limit: int = 100,
-    ) -> tuple[list[tuple[Event, str | None, UUID, str, str | None]], int]:
+    ) -> tuple[list[tuple[Event, str | None, UUID, str, str | None, int]], int]:
         from sqlalchemy import func
 
         filters = []
@@ -54,7 +54,13 @@ class EventRepository(BaseRepository[Event]):
             event_statement
             .outerjoin(Snapshot, Snapshot.event_id == Event.id)
             .join(Camera, Camera.id == Tracking.camera_id)
-            .add_columns(Snapshot.image_path, Tracking.camera_id, Camera.name, Camera.location)
+            .add_columns(
+                Snapshot.image_path,
+                Tracking.camera_id,
+                Camera.name,
+                Camera.location,
+                Tracking.byte_track_id,
+            )
         )
         items = list((await self.session.execute(statement.order_by(Event.occurred_at.desc()).offset(offset).limit(limit))).all())
         total = await self.session.scalar(select(func.count()).select_from(event_statement.subquery()))

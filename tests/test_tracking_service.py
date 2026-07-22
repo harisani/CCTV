@@ -1,5 +1,7 @@
 import unittest
 
+import numpy as np
+
 from app.detector import Detection
 from app.tracker import TrackingService
 
@@ -26,6 +28,37 @@ class FakeTracker:
 
 
 class TrackingServiceTest(unittest.TestCase):
+    def test_tracker_input_supports_boolean_slicing_and_xywh(self) -> None:
+        service = TrackingService(TestSettings())
+        detection = Detection((10, 20, 50, 100), 0.9, 0, "person", (30, 60))
+        results = service._to_tracker_input([detection])
+        selected = results[np.asarray([True])]
+
+        self.assertEqual(selected.xywh.tolist(), [[30.0, 60.0, 40.0, 80.0]])
+        self.assertAlmostEqual(selected.conf.tolist()[0], 0.9, places=5)
+
+    def test_supports_new_bytetrack_constructor_without_frame_rate(self) -> None:
+        class NewByteTracker:
+            def __init__(self, arguments: object) -> None:
+                self.arguments = arguments
+
+        arguments = object()
+        tracker = TrackingService._instantiate_bytetracker(
+            NewByteTracker, arguments, 10
+        )
+        self.assertIs(tracker.arguments, arguments)
+
+    def test_supports_legacy_bytetrack_constructor_with_frame_rate(self) -> None:
+        class LegacyByteTracker:
+            def __init__(self, arguments: object, frame_rate: int = 30) -> None:
+                self.arguments = arguments
+                self.frame_rate = frame_rate
+
+        tracker = TrackingService._instantiate_bytetracker(
+            LegacyByteTracker, object(), 12
+        )
+        self.assertEqual(tracker.frame_rate, 12)
+
     def test_assigns_tracking_id_and_maintains_history(self) -> None:
         fake_tracker = FakeTracker()
         service = TrackingService(

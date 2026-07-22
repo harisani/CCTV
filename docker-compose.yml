@@ -5,6 +5,8 @@ services:
       args:
         TORCH_INDEX_URL: ${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cpu}
     env_file: .env
+    environment:
+      YOLO_CONFIG_DIR: /tmp
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:

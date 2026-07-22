@@ -7,13 +7,17 @@ import logging
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 from uuid import UUID
 
 from app.services.camera_service import CameraService
 
+if TYPE_CHECKING:
+    from app.services.realtime_pipeline import CameraRealtimePipeline, PipelineFrame
+
 CameraFactory = Callable[[str, str], CameraService]
 JpegEncoder = Callable[[Any, int], bytes]
+PipelineFactory = Callable[[UUID], "CameraRealtimePipeline"]
 
 
 @dataclass(slots=True)
@@ -22,6 +26,10 @@ class _CameraRuntime:
     name: str
     rtsp_url: str
     service: CameraService
+    location: str | None = None
+    pipeline: CameraRealtimePipeline | None = None
+    last_ai_frame: int = 0
+    last_tracks: list[dict[str, Any]] | None = None
     last_published_frame: int = 0
     last_publish_at: float = 0.0
     last_health_at: float = 0.0
@@ -47,12 +55,14 @@ class CameraRuntimeManager:
         *,
         camera_factory: CameraFactory | None = None,
         jpeg_encoder: JpegEncoder | None = None,
+        pipeline_factory: PipelineFactory | None = None,
     ) -> None:
         self._settings = settings
         self._catalog = catalog
         self._dashboard_hub = dashboard_hub
         self._camera_factory = camera_factory or self._create_camera
         self._jpeg_encoder = jpeg_encoder or self._encode_jpeg
+        self._pipeline_factory = pipeline_factory
         self._runtimes: dict[UUID, _CameraRuntime] = {}
         self._task: asyncio.Task[None] | None = None
         self._stop_event = asyncio.Event()
@@ -74,6 +84,14 @@ class CameraRuntimeManager:
         connect_tasks = [runtime.connect_task for runtime in self._runtimes.values() if runtime.connect_task]
         for connect_task in connect_tasks:
             connect_task.cancel()
+        await asyncio.gather(
+            *(
+                runtime.pipeline.stop()
+                for runtime in self._runtimes.values()
+                if runtime.pipeline is not None
+            ),
+            return_exceptions=True,
+        )
         await asyncio.gather(
             *(asyncio.to_thread(runtime.service.disconnect) for runtime in self._runtimes.values()),
             return_exceptions=True,
@@ -106,6 +124,8 @@ class CameraRuntimeManager:
         for camera_id, runtime in tuple(self._runtimes.items()):
             camera = definitions.get(camera_id)
             if camera is None or camera.rtsp_url != runtime.rtsp_url:
+                if runtime.pipeline is not None:
+                    await runtime.pipeline.stop()
                 await asyncio.to_thread(runtime.service.disconnect)
                 self._runtimes.pop(camera_id, None)
                 await self._report_health(runtime, "OFFLINE", None, None, force=True)
@@ -114,7 +134,25 @@ class CameraRuntimeManager:
             if camera_id in self._runtimes:
                 continue
             service = self._camera_factory(str(camera_id), camera.rtsp_url)
-            self._runtimes[camera_id] = _CameraRuntime(camera_id, camera.name, camera.rtsp_url, service)
+            pipeline = None
+            if self._pipeline_factory is not None:
+                try:
+                    pipeline = self._pipeline_factory(camera_id)
+                    await pipeline.start()
+                except Exception:
+                    pipeline = None
+                    self._logger.exception(
+                        "Unable to start AI pipeline camera_id=%s", camera_id
+                    )
+            self._runtimes[camera_id] = _CameraRuntime(
+                camera_id,
+                camera.name,
+                camera.rtsp_url,
+                service,
+                location=getattr(camera, "location", None),
+                pipeline=pipeline,
+                last_tracks=[],
+            )
             self._logger.info("Camera runtime registered camera_id=%s name=%s", camera_id, camera.name)
 
     async def _maintain_connections(self) -> None:
@@ -161,6 +199,30 @@ class CameraRuntimeManager:
 
             captured_at = datetime.now(UTC)
             await self._report_health(runtime, "ONLINE", captured_at, None)
+            pipeline_result: PipelineFrame | None = None
+            if (
+                runtime.pipeline is not None
+                and frame_number != runtime.last_ai_frame
+            ):
+                try:
+                    pipeline_result = await runtime.pipeline.process(
+                        frame, captured_at=captured_at
+                    )
+                    runtime.last_ai_frame = frame_number
+                    runtime.last_tracks = pipeline_result.tracks
+                    for payload in pipeline_result.events:
+                        payload["camera_id"] = str(runtime.camera_id)
+                        payload["camera_name"] = runtime.name
+                        payload["camera_location"] = runtime.location
+                        await self._dashboard_hub.publish_event(payload)
+                    if pipeline_result.occupancy is not None:
+                        await self._dashboard_hub.publish_occupancy(
+                            pipeline_result.occupancy
+                        )
+                except Exception:
+                    self._logger.exception(
+                        "AI pipeline failed camera_id=%s", runtime.camera_id
+                    )
             publish_interval = 1 / self._settings.dashboard_stream_fps
             if not self._dashboard_hub.has_subscribers(str(runtime.camera_id)):
                 return
@@ -176,7 +238,7 @@ class CameraRuntimeManager:
                 jpeg_bytes=jpeg_bytes,
                 width=int(width),
                 height=int(height),
-                tracks=[],
+                tracks=runtime.last_tracks or [],
             )
             runtime.last_published_frame = frame_number
             runtime.last_publish_at = now

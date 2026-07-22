@@ -105,6 +105,15 @@ class Settings(BaseSettings):
     dashboard_jpeg_quality: int = Field(default=70, ge=30, le=95)
     camera_health_update_seconds: float = Field(default=30.0, gt=0)
     enable_camera_runtime: bool = True
+    enable_ai_pipeline: bool = True
+    ai_pipeline_fps: float = Field(default=5.0, gt=0, le=60)
+    ai_max_concurrent_inferences: int = Field(default=1, gt=0, le=16)
+    ai_person_class_id: int = Field(default=0, ge=0)
+    ai_tracking_persist_interval_seconds: float = Field(default=1.0, gt=0)
+    ai_track_inactive_frames: int = Field(default=60, gt=0)
+    ai_event_retry_queue_size: int = Field(default=1000, gt=0)
+    reid_min_crop_width: int = Field(default=32, gt=0)
+    reid_min_crop_height: int = Field(default=64, gt=0)
     torch_num_threads: int = Field(default=0, ge=0)
     opencv_num_threads: int = Field(default=0, ge=0)
 

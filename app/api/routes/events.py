@@ -30,6 +30,7 @@ async def list_events(
         EventResponse(
             id=event.id,
             tracking_id=event.tracking_id,
+            byte_track_id=byte_track_id,
             event_type=event.event_type.value,
             line_id=event.line_id,
             centroid=event.centroid,
@@ -39,7 +40,7 @@ async def list_events(
             camera_name=camera_name,
             camera_location=camera_location,
         )
-        for event, image_path, camera_id, camera_name, camera_location in items
+        for event, image_path, camera_id, camera_name, camera_location, byte_track_id in items
     ]
     return Page[EventResponse](items=responses, total=total, offset=offset, limit=limit)
 

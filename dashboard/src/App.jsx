@@ -171,7 +171,7 @@ function EventHistory({ events, total, page, rowsPerPage, date, onDate, onPage, 
                 {event.event_type === 'ENTER' ? 'MASUK' : 'KELUAR'}
               </span>
             </td>
-            <td data-label="Tracking">#{event.tracking_id ?? '—'}</td>
+            <td data-label="Tracking">#{event.byte_track_id ?? event.tracking_id ?? '—'}</td>
             <td data-label="Snapshot">
               <Button
                 className="action-button"
@@ -390,6 +390,12 @@ function App() {
     if (message.type === 'event') {
       setEvents(current => [message.payload, ...current].slice(0, rowsPerPage))
       setEventTotal(current => current + 1)
+      setStats(current => ({
+        ...current,
+        enter_count: current.enter_count + (message.payload.event_type === 'ENTER' ? 1 : 0),
+        exit_count: current.exit_count + (message.payload.event_type === 'EXIT' ? 1 : 0),
+      }))
+      api('/persons?limit=20', token).then(page => setPersons(page.items)).catch(() => {})
     }
     if (message.type === 'error') setError(message.detail)
   }, setSocketStatus)
@@ -465,7 +471,7 @@ function App() {
         },
       }))
     const eventItems = events
-      .filter(event => matches(`${event.camera_name || ''} ${event.camera_location || ''} ${event.event_type || ''} ${event.tracking_id || ''}`))
+      .filter(event => matches(`${event.camera_name || ''} ${event.camera_location || ''} ${event.event_type || ''} ${event.byte_track_id || event.tracking_id || ''}`))
       .slice(0, 5)
       .map(event => ({
         key: `event-${event.id}`,

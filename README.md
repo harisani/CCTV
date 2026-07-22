@@ -204,6 +204,47 @@ melakukan encoding JPEG ketika dashboard berlangganan ke kamera tersebut. Atur
 `DASHBOARD_STREAM_FPS` serta `DASHBOARD_JPEG_QUALITY` untuk menyeimbangkan
 kelancaran live view dengan CPU dan bandwidth.
 
+## Pipeline AI realtime end-to-end
+
+Setiap kamera aktif memiliki state ByteTrack dan line-crossing sendiri. Model
+YOLO dan OSNet dibagi antar-kamera agar weight tidak dimuat berulang, sedangkan
+semaphore membatasi inference paralel agar CPU/GPU tidak kehabisan memori.
+
+```text
+CameraService latest frame
+  → YOLOv11 (hanya class person)
+  → ByteTrack per kamera
+  → OSNet ReID saat track baru
+  → Person + Tracking PostgreSQL
+  → Line Crossing ENTER/EXIT
+  → Snapshot JPEG + JSON
+  → Event + Snapshot dalam transaksi database
+  → WebSocket frame/tracks/event/occupancy
+  → Dashboard React
+```
+
+AI tetap memproses kamera walaupun tidak ada dashboard yang berlangganan. JPEG
+live hanya diencode untuk kamera yang sedang dilihat. Tracking yang tidak muncul
+lagi ditutup otomatis, dan event yang gagal disimpan karena gangguan database
+masuk ke antrean retry bounded tanpa membuang snapshot.
+
+Konfigurasi pipeline:
+
+```dotenv
+ENABLE_AI_PIPELINE=true
+AI_PIPELINE_FPS=5
+AI_MAX_CONCURRENT_INFERENCES=1
+AI_PERSON_CLASS_ID=0
+AI_TRACKING_PERSIST_INTERVAL_SECONDS=1.0
+AI_TRACK_INACTIVE_FRAMES=60
+AI_EVENT_RETRY_QUEUE_SIZE=1000
+REID_MIN_CROP_WIDTH=32
+REID_MIN_CROP_HEIGHT=64
+```
+
+Untuk Mac M1/CPU mulai dari `AI_PIPELINE_FPS=2` dan concurrency `1`. Untuk GPU,
+naikkan FPS dan concurrency secara bertahap sambil memantau VRAM serta latency.
+
 Hentikan layanan dengan `docker compose down`. Tambahkan `-v` hanya bila data
 PostgreSQL memang ingin dihapus.
 
@@ -226,8 +267,8 @@ app/
 ├── config/       Settings Pydantic dari .env
 ├── database/     Engine dan async SQLAlchemy session
 ├── models/       Entitas ORM termasuk Camera, Event, backup, dan katalog DR
-├── repository/   Query dan persistensi per entitas, termasuk katalog backup/DR
-├── services/     Kamera, RBAC, backup/DR terenkripsi, scheduler, composition root
+├── repository/   Query per entitas dan transaksi persistence pipeline realtime
+├── services/     Kamera, pipeline AI, crossing, backup/DR, dan scheduler
 ├── detector/     Adapter YOLOv11
 ├── tracker/      Adapter ByteTrack + riwayat centroid
 ├── reid/         OSNet/TorchReID dan pencocokan embedding

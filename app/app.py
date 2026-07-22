@@ -16,6 +16,7 @@ from app.utils.runtime import configure_compute_runtime
 from app.services.user_service import ensure_bootstrap_admin
 from app.services.backup_scheduler import BackupScheduler
 from app.services.disaster_recovery_scheduler import DisasterRecoveryScheduler
+from app.services.realtime_pipeline import RealtimePipelineFactory
 
 
 @asynccontextmanager
@@ -35,10 +36,16 @@ async def lifespan(_: FastAPI):
         dr_scheduler = DisasterRecoveryScheduler(settings, SessionLocal)
         await dr_scheduler.start()
     if settings.enable_camera_runtime:
+        pipeline_factory = (
+            RealtimePipelineFactory(settings, SessionLocal)
+            if settings.enable_ai_pipeline
+            else None
+        )
         camera_runtime = CameraRuntimeManager(
             settings,
             CameraRuntimeRepository(SessionLocal),
             dashboard_hub,
+            pipeline_factory=pipeline_factory.create if pipeline_factory else None,
         )
         await camera_runtime.start()
     try:

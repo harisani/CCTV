@@ -1,0 +1,202 @@
+import asyncio
+import tempfile
+import unittest
+from datetime import UTC, datetime
+from pathlib import Path
+from types import SimpleNamespace
+from uuid import UUID, uuid4
+
+from app.detector import Detection
+from app.services.crossing_service import CrossingEvent, CrossingType
+from app.services.realtime_pipeline import CameraRealtimePipeline
+from app.storage import SnapshotResult
+from app.tracker import TrackedDetection
+
+
+class PipelineSettings:
+    ai_pipeline_fps = 60.0
+    ai_person_class_id = 0
+    ai_tracking_persist_interval_seconds = 0.001
+    ai_track_inactive_frames = 3
+    ai_event_retry_queue_size = 10
+    reid_min_crop_width = 10
+    reid_min_crop_height = 10
+    storage_path = "storage"
+
+
+class FakeDetector:
+    def predict(self, _frame: object) -> list[Detection]:
+        return [Detection((10, 10, 70, 150), 0.95, 0, "person", (40, 80))]
+
+
+class FakeTracker:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.reset_called = False
+
+    def update(self, _detections: object) -> list[TrackedDetection]:
+        self.calls += 1
+        centroid = (40.0, 80.0 + self.calls * 30)
+        return [
+            TrackedDetection(
+                7,
+                (10, 10, 70, 150),
+                0.95,
+                0,
+                "person",
+                centroid,
+                "down",
+                (centroid,),
+            )
+        ]
+
+    def reset(self) -> None:
+        self.reset_called = True
+
+
+class FakeReIdentification:
+    def crop_person(self, _frame: object, _bbox: object) -> object:
+        return object()
+
+    def extract_embedding(self, _crop: object) -> tuple[float, ...]:
+        return (1.0,) + (0.0,) * 511
+
+
+class FakeCrossing:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def process(self, tracks: list[TrackedDetection]) -> list[CrossingEvent]:
+        self.calls += 1
+        if self.calls != 2:
+            return []
+        return [
+            CrossingEvent(
+                uuid4(),
+                CrossingType.ENTER,
+                "door",
+                tracks[0].tracking_id,
+                tracks[0].centroid,
+                datetime.now(UTC),
+            )
+        ]
+
+    def reset(self) -> None:
+        pass
+
+
+class FakeSnapshots:
+    def __init__(self, root: Path) -> None:
+        self.root = root
+
+    async def save_async(self, _frame: object, _event: object, _track: object, **_kwargs: object) -> SnapshotResult:
+        image = self.root / "event.jpg"
+        metadata = self.root / "event.json"
+        image.write_bytes(b"jpeg")
+        metadata.write_text("{}", encoding="utf-8")
+        return SnapshotResult(uuid4(), image, metadata)
+
+
+class FakePersistence:
+    def __init__(self, person_id: UUID, *, fail_event_once: bool = False) -> None:
+        self.person_id = person_id
+        self.database_tracking_id = uuid4()
+        self.started = 0
+        self.persisted = 0
+        self.closed = 0
+        self.fail_event_once = fail_event_once
+
+    async def close_camera_trackings(self, _camera_id: UUID) -> None:
+        pass
+
+    async def identify_person(self, _service: object, _embedding: object) -> UUID:
+        return self.person_id
+
+    async def start_tracking(self, **_fields: object) -> UUID:
+        self.started += 1
+        return self.database_tracking_id
+
+    async def update_trackings(self, _updates: object) -> None:
+        pass
+
+    async def persist_crossing(self, **fields: object) -> tuple[bool, dict]:
+        if self.fail_event_once:
+            self.fail_event_once = False
+            raise RuntimeError("temporary database outage")
+        self.persisted += 1
+        crossing = fields["crossing"]
+        return True, {
+            "id": str(crossing.event_id),
+            "event_type": crossing.event_type.value,
+        }
+
+    async def current_occupancy(self) -> int:
+        return 1
+
+    async def close_trackings(self, tracking_ids: list[UUID], **_fields: object) -> None:
+        self.closed += len(tracking_ids)
+
+    @staticmethod
+    def remove_snapshot(_snapshot: object) -> None:
+        pass
+
+
+class RealtimePipelineTest(unittest.IsolatedAsyncioTestCase):
+    async def _pipeline(
+        self, root: Path, *, fail_event_once: bool = False
+    ) -> tuple[CameraRealtimePipeline, FakePersistence, FakeTracker]:
+        settings = PipelineSettings()
+        settings.storage_path = str(root)
+        persistence = FakePersistence(uuid4(), fail_event_once=fail_event_once)
+        tracker = FakeTracker()
+        pipeline = CameraRealtimePipeline(
+            camera_id=uuid4(),
+            settings=settings,
+            detector=FakeDetector(),
+            tracker=tracker,
+            reidentification=FakeReIdentification(),
+            crossing=FakeCrossing(),
+            snapshots=FakeSnapshots(root),
+            persistence=persistence,
+            inference_semaphore=asyncio.Semaphore(1),
+        )
+        await pipeline.start()
+        return pipeline, persistence, tracker
+
+    async def test_runs_detection_tracking_reid_crossing_snapshot_and_database(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            pipeline, persistence, tracker = await self._pipeline(Path(directory))
+            first = await pipeline.process(SimpleNamespace())
+            await asyncio.sleep(0.02)
+            second = await pipeline.process(SimpleNamespace())
+
+            self.assertTrue(first.processed)
+            self.assertEqual(persistence.started, 1)
+            self.assertEqual(second.tracks[0]["tracking_id"], 7)
+            self.assertEqual(second.events[0]["event_type"], "ENTER")
+            self.assertEqual(second.occupancy, 1)
+            self.assertEqual(persistence.persisted, 1)
+            self.assertTrue((Path(directory) / "event.jpg").is_file())
+
+            await pipeline.stop()
+            self.assertTrue(tracker.reset_called)
+            self.assertEqual(persistence.closed, 1)
+
+    async def test_retries_event_after_temporary_database_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            pipeline, persistence, _tracker = await self._pipeline(
+                Path(directory), fail_event_once=True
+            )
+            await pipeline.process(SimpleNamespace())
+            await asyncio.sleep(0.02)
+            failed = await pipeline.process(SimpleNamespace())
+            self.assertEqual(failed.events, [])
+
+            await asyncio.sleep(0.02)
+            retried = await pipeline.process(SimpleNamespace())
+            self.assertEqual(retried.events[0]["event_type"], "ENTER")
+            self.assertEqual(persistence.persisted, 1)
+
+
+if __name__ == "__main__":
+    unittest.main()

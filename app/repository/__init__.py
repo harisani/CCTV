@@ -11,5 +11,6 @@ from app.repository.user_repository import UserRepository
 from app.repository.audit_repository import AuditRepository
 from app.repository.backup_repository import BackupRepository
 from app.repository.disaster_recovery_repository import DisasterRecoveryRepository
+from app.repository.pipeline_repository import PipelineRepository
 
-__all__ = ["AuditRepository", "BackupRepository", "CameraRepository", "CameraRuntimeRepository", "DisasterRecoveryRepository", "EventRepository", "PersonRepository", "SnapshotRepository", "StatisticsRepository", "TrackingRepository", "UserRepository"]
+__all__ = ["AuditRepository", "BackupRepository", "CameraRepository", "CameraRuntimeRepository", "DisasterRecoveryRepository", "EventRepository", "PersonRepository", "PipelineRepository", "SnapshotRepository", "StatisticsRepository", "TrackingRepository", "UserRepository"]
