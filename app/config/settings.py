@@ -59,7 +59,16 @@ class Settings(BaseSettings):
     reid_image_width: int = Field(default=128, gt=0)
     reid_image_height: int = Field(default=256, gt=0)
     reid_embedding_dimension: int = Field(default=512, gt=0)
-    reid_similarity_threshold: float = Field(default=0.75, ge=0, le=1)
+    reid_similarity_threshold: float = Field(default=0.78, ge=0, le=1)
+    reid_match_margin: float = Field(default=0.05, ge=0, le=1)
+    reid_candidate_limit: int = Field(default=50, gt=1, le=1000)
+    reid_min_quality_score: float = Field(default=0.45, ge=0, le=1)
+    reid_sharpness_reference: float = Field(default=150.0, gt=0)
+    reid_embedding_retention_days: int = Field(default=90, gt=0)
+    reid_min_embeddings_per_person: int = Field(default=3, gt=0)
+    reid_max_embeddings_per_person: int = Field(default=20, gt=0)
+    reid_retention_interval_hours: int = Field(default=24, gt=0)
+    enable_reid_retention: bool = True
 
     jwt_secret: str = Field(repr=False)
     jwt_algorithm: str = "HS256"

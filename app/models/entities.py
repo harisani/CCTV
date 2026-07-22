@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import BigInteger, Date, JSON, Boolean, DateTime, Enum, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from pgvector.sqlalchemy import Vector
 
 from app.database.base import Base
 
@@ -153,10 +154,53 @@ class Person(Base):
     display_name: Mapped[str | None] = mapped_column(String(100), index=True)
     reid_key: Mapped[str | None] = mapped_column(String(128), unique=True, index=True)
     reid_embedding: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    needs_review: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    merged_into_person_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("persons.id", ondelete="SET NULL"), index=True
+    )
+    identity_version: Mapped[int] = mapped_column(Integer, default=1)
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     trackings: Mapped[list[Tracking]] = relationship(back_populates="person")
+    embeddings: Mapped[list[PersonEmbedding]] = relationship(
+        back_populates="person", cascade="all, delete-orphan"
+    )
+    merged_into: Mapped[Person | None] = relationship(remote_side="Person.id")
+
+
+class PersonEmbedding(Base):
+    __tablename__ = "person_embeddings"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    person_id: Mapped[UUID] = mapped_column(
+        ForeignKey("persons.id", ondelete="CASCADE"), index=True
+    )
+    tracking_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("trackings.id", ondelete="SET NULL"), index=True
+    )
+    camera_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("cameras.id", ondelete="SET NULL"), index=True
+    )
+    model_name: Mapped[str] = mapped_column(String(100), index=True)
+    dimension: Mapped[int] = mapped_column(Integer, default=512)
+    embedding: Mapped[list[float]] = mapped_column(Vector(512))
+    quality_score: Mapped[float] = mapped_column(default=1.0, index=True)
+    match_similarity: Mapped[float | None] = mapped_column()
+    match_decision: Mapped[str] = mapped_column(String(30), index=True)
+    matched_embedding_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("person_embeddings.id", ondelete="SET NULL")
+    )
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    last_matched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    match_count: Mapped[int] = mapped_column(Integer, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow
+    )
+    person: Mapped[Person] = relationship(back_populates="embeddings")
 
 
 class Tracking(Base):

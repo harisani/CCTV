@@ -24,12 +24,29 @@ class PipelineRepository:
     def __init__(self, session_factory: Any) -> None:
         self._session_factory = session_factory
 
-    async def identify_person(self, reid_service: Any, embedding: tuple[float, ...]) -> UUID:
+    async def identify_person(
+        self,
+        reid_service: Any,
+        embedding: tuple[float, ...],
+        *,
+        quality_score: float,
+        camera_id: UUID,
+        captured_at: datetime,
+    ) -> Any:
         async with self._session_factory() as session:
-            result = await reid_service.identify_embedding(
-                embedding, PersonRepository(session)
+            return await reid_service.identify_embedding(
+                embedding,
+                PersonRepository(session),
+                quality_score=quality_score,
+                camera_id=camera_id,
+                captured_at=captured_at,
             )
-            return result.person_id
+
+    async def link_embedding(self, embedding_id: UUID, tracking_id: UUID) -> None:
+        async with self._session_factory() as session:
+            repository = PersonRepository(session)
+            await repository.link_embedding_to_tracking(embedding_id, tracking_id)
+            await session.commit()
 
     async def start_tracking(
         self,

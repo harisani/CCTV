@@ -64,6 +64,7 @@ class CameraRealtimePipeline:
         self._inference_semaphore = inference_semaphore
         self._database_tracks: dict[int, UUID] = {}
         self._person_ids: dict[int, UUID | None] = {}
+        self._embedding_ids: dict[int, UUID] = {}
         self._last_seen_frame: dict[int, int] = {}
         self._last_dashboard_tracks: list[dict[str, Any]] = []
         self._pending_events: list[_PendingEvent] = []
@@ -83,6 +84,7 @@ class CameraRealtimePipeline:
         self._crossing.reset()
         self._database_tracks.clear()
         self._person_ids.clear()
+        self._embedding_ids.clear()
         self._last_seen_frame.clear()
 
     def configure_crossing(self, config: dict[str, Any] | None) -> None:
@@ -156,7 +158,7 @@ class CameraRealtimePipeline:
             self._last_seen_frame[track.tracking_id] = self._frame_number
             if track.tracking_id in self._database_tracks:
                 continue
-            person_id = await self._identify_once(frame, track)
+            person_id = await self._identify_once(frame, track, captured_at)
             try:
                 database_id = await self._persistence.start_tracking(
                     camera_id=self.camera_id,
@@ -172,9 +174,18 @@ class CameraRealtimePipeline:
                 )
                 continue
             self._database_tracks[track.tracking_id] = database_id
+            embedding_id = self._embedding_ids.get(track.tracking_id)
+            if embedding_id is not None:
+                try:
+                    await self._persistence.link_embedding(embedding_id, database_id)
+                except Exception:
+                    self._logger.exception(
+                        "Unable to link ReID template to tracking byte_track_id=%s",
+                        track.tracking_id,
+                    )
 
     async def _identify_once(
-        self, frame: Any, track: TrackedDetection
+        self, frame: Any, track: TrackedDetection, captured_at: datetime
     ) -> UUID | None:
         if track.tracking_id in self._person_ids:
             return self._person_ids[track.tracking_id]
@@ -187,13 +198,31 @@ class CameraRealtimePipeline:
             return None
         try:
             crop = self._reidentification.crop_person(frame, track.bbox)
+            quality = self._reidentification.quality_score(
+                crop, detector_confidence=track.confidence
+            )
+            if quality < self._settings.reid_min_quality_score:
+                self._logger.info(
+                    "ReID skipped low-quality crop byte_track_id=%s quality=%.3f",
+                    track.tracking_id,
+                    quality,
+                )
+                self._person_ids[track.tracking_id] = None
+                return None
             async with self._inference_semaphore:
                 embedding = await asyncio.to_thread(
                     self._reidentification.extract_embedding, crop
                 )
-            person_id = await self._persistence.identify_person(
-                self._reidentification, embedding
+            result = await self._persistence.identify_person(
+                self._reidentification,
+                embedding,
+                quality_score=quality,
+                camera_id=self.camera_id,
+                captured_at=captured_at,
             )
+            person_id = result.person_id
+            if result.embedding_id is not None:
+                self._embedding_ids[track.tracking_id] = result.embedding_id
         except Exception:
             self._logger.exception(
                 "ReID failed byte_track_id=%s; tracking continues without person_id",
@@ -335,6 +364,7 @@ class CameraRealtimePipeline:
             self._last_seen_frame.pop(track_id, None)
             self._database_tracks.pop(track_id, None)
             self._person_ids.pop(track_id, None)
+            self._embedding_ids.pop(track_id, None)
 
     def _dashboard_track(self, track: TrackedDetection) -> dict[str, Any]:
         person_id = self._person_ids.get(track.tracking_id)

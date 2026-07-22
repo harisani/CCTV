@@ -17,7 +17,8 @@ RUN apt-get update \
 COPY requirements.txt ./
 RUN pip install --no-cache-dir \
         torch==2.5.1 torchvision==0.20.1 --index-url "${TORCH_INDEX_URL}" \
-    && pip install --no-cache-dir -r requirements.txt
+    && pip install --no-cache-dir -r requirements.txt \
+    && python -c "import torchreid; torchreid.models.build_model(name='osnet_x1_0', num_classes=1000, loss='softmax', pretrained=True)"
 
 COPY app ./app
 COPY alembic.ini ./

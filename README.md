@@ -240,10 +240,65 @@ AI_TRACK_INACTIVE_FRAMES=60
 AI_EVENT_RETRY_QUEUE_SIZE=1000
 REID_MIN_CROP_WIDTH=32
 REID_MIN_CROP_HEIGHT=64
+REID_SIMILARITY_THRESHOLD=0.78
+REID_MATCH_MARGIN=0.05
+REID_MIN_QUALITY_SCORE=0.45
+REID_EMBEDDING_RETENTION_DAYS=90
+REID_MIN_EMBEDDINGS_PER_PERSON=3
+REID_MAX_EMBEDDINGS_PER_PERSON=20
+ENABLE_REID_RETENTION=true
 ```
 
 Untuk Mac M1/CPU mulai dari `AI_PIPELINE_FPS=2` dan concurrency `1`. Untuk GPU,
 naikkan FPS dan concurrency secara bertahap sambil memantau VRAM serta latency.
+
+### Menguji dengan webcam MacBook
+
+Docker Desktop tidak mengekspos webcam macOS sebagai `/dev/video0`. Untuk mode
+uji, webcam disiarkan oleh FFmpeg di host menuju MediaMTX, kemudian API membaca
+relay tersebut sebagai RTSP biasa.
+
+```bash
+brew install ffmpeg
+docker compose --profile webcam up -d mediamtx
+./scripts/list_mac_cameras.sh
+./scripts/start_mac_webcam.sh
+```
+
+Saat macOS meminta izin, izinkan Camera untuk Terminal. Tambahkan kamera dari
+dashboard dengan URL berikut (hostname `mediamtx` dipakai karena API berada di
+jaringan Docker):
+
+```text
+rtsp://mediamtx:8554/macbook-webcam
+```
+
+Jika kamera bukan indeks `0`, jalankan misalnya
+`WEBCAM_DEVICE_INDEX=1 ./scripts/start_mac_webcam.sh`. Tekan `Ctrl+C` pada
+terminal FFmpeg untuk menghentikan stream. MediaMTX hanya aktif ketika profile
+`webcam` dipilih dan tidak ikut berjalan pada deployment produksi biasa.
+
+### ReID production dan koreksi identitas
+
+Embedding OSNet 512 dimensi disimpan sebagai template terpisah pada PostgreSQL
+`pgvector` dan dicari menggunakan cosine distance melalui indeks HNSW. Sebuah
+hasil hanya diterima jika melewati threshold dan unggul dari kandidat orang
+kedua sebesar `REID_MATCH_MARGIN`. Hasil yang melewati threshold tetapi terlalu
+dekat dengan kandidat kedua dibuat sebagai identitas baru berstatus **perlu
+ditinjau**, sehingga dua orang tidak otomatis digabung karena pakaian/APD yang
+mirip. Crop kecil, buram, atau confidence rendah tidak masuk galeri embedding.
+
+Admin dan super admin dapat membuka **Administrasi → Identitas ReID** untuk:
+
+- menggabungkan beberapa identitas ke satu identitas utama;
+- memisahkan tracking historis ke identitas baru;
+- melihat threshold, margin ambigu, jumlah template, dan status tinjauan.
+
+Merge/split ditolak selama tracking terkait masih aktif, berjalan dalam satu
+transaksi, mempertahankan event/snapshot, dan dicatat di audit log. Scheduler
+retensi menghapus template embedding yang kedaluwarsa atau melebihi batas per
+orang, tetapi selalu mempertahankan jumlah minimum dan tidak menghapus Person,
+Tracking, Event, atau Snapshot.
 
 ### Garis crossing per kamera
 

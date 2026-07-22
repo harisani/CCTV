@@ -31,7 +31,9 @@ class StatisticsRepository:
             select(func.count()).select_from(event_query).where(event_query.c.event_type == EventType.EXIT)
         )
         total_events = await self.session.scalar(select(func.count()).select_from(event_query))
-        total_persons = await self.session.scalar(select(func.count()).select_from(Person))
+        total_persons = await self.session.scalar(
+            select(func.count()).select_from(Person).where(Person.is_active.is_(True))
+        )
         total_cameras = await self.session.scalar(select(func.count()).select_from(Camera).where(Camera.enabled.is_(True)))
         total_snapshots = await self.session.scalar(select(func.count()).select_from(Snapshot))
         current_person_count = await self.session.scalar(

@@ -1,5 +1,7 @@
 @import "../../tokens.css";
 
+/* Hallmark · macrostructure: Identity decision workbench · genre: modern-minimal · tone: technical-utilitarian · theme: Cobalt · contrast: pass (40–41) · nav: N13 · footer: Ft2 · slop: pass (42–45) */
+
 html,
 body {
   overflow-x: clip;
@@ -1794,5 +1796,169 @@ a,
     animation-iteration-count: 1 !important;
     scroll-behavior: auto !important;
     transition-duration: var(--dur-micro) !important;
+  }
+}
+
+.reid-admin {
+  min-width: 0;
+}
+
+.reid-loading {
+  display: flex;
+  min-height: 8rem;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+}
+
+.reid-policy {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-block: var(--space-lg) var(--space-xl);
+  border-block: var(--rule-thin) solid var(--color-rule-2);
+}
+
+.reid-policy > div {
+  min-width: 0;
+  padding: var(--space-sm);
+  border-block-end: var(--rule-thin) solid var(--color-rule);
+}
+
+.reid-policy > div:nth-child(odd) {
+  border-inline-end: var(--rule-thin) solid var(--color-rule);
+}
+
+.reid-policy > div:nth-last-child(-n + 2) {
+  border-block-end: 0;
+}
+
+.reid-policy span,
+.reid-policy strong {
+  display: block;
+}
+
+.reid-policy span {
+  color: var(--color-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.reid-policy strong {
+  margin-block-start: var(--space-2xs);
+  color: var(--color-ink);
+  font-size: var(--text-md);
+  font-variant-numeric: tabular-nums;
+}
+
+.reid-workbench {
+  display: grid;
+  gap: var(--space-xl);
+}
+
+.reid-operation {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding-block-start: var(--space-lg);
+  border-block-start: var(--rule-thin) solid var(--color-rule-2);
+}
+
+.reid-operation__heading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.reid-operation__heading > .MuiSvgIcon-root {
+  flex: 0 0 auto;
+  color: var(--color-accent);
+}
+
+.reid-operation__heading h3,
+.reid-operation__heading p {
+  margin: 0;
+}
+
+.reid-operation__heading h3 {
+  min-width: 0;
+  color: var(--color-ink);
+  font-size: var(--text-base);
+  overflow-wrap: anywhere;
+}
+
+.reid-operation__heading p {
+  max-width: 60ch;
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+}
+
+.reid-selection-list {
+  max-height: 20rem;
+  overflow-y: auto;
+  border-block: var(--rule-thin) solid var(--color-rule);
+}
+
+.reid-selection-list .MuiFormControlLabel-root {
+  display: flex;
+  min-height: 3.5rem;
+  margin: 0;
+  padding-inline: var(--space-xs);
+  border-block-end: var(--rule-thin) solid var(--color-rule);
+}
+
+.reid-selection-list .MuiFormControlLabel-root:last-of-type {
+  border-block-end: 0;
+}
+
+.reid-selection-list .MuiFormControlLabel-label {
+  min-width: 0;
+}
+
+.reid-selection-list .MuiFormControlLabel-label > span,
+.reid-selection-list strong,
+.reid-selection-list small {
+  display: block;
+}
+
+.reid-selection-list strong {
+  overflow: hidden;
+  color: var(--color-ink);
+  font-size: var(--text-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reid-selection-list small {
+  color: var(--color-muted);
+  font-size: var(--text-xs);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .reid-selection-list .MuiFormControlLabel-root:hover {
+    background: var(--color-paper-2);
+  }
+}
+
+@media (min-width: 48rem) {
+  .reid-policy {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .reid-policy > div,
+  .reid-policy > div:nth-last-child(-n + 2) {
+    border-block-end: 0;
+  }
+
+  .reid-policy > div:not(:last-child) {
+    border-inline-end: var(--rule-thin) solid var(--color-rule);
+  }
+
+  .reid-workbench {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

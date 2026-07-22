@@ -180,8 +180,44 @@ class PersonResponse(BaseModel):
     id: UUID
     display_name: str | None
     reid_key: str | None
+    is_active: bool
+    needs_review: bool
+    merged_into_person_id: UUID | None
+    identity_version: int
+    embedding_count: int = 0
+    tracking_count: int = 0
     first_seen_at: datetime
     last_seen_at: datetime
+
+
+class PersonMergeRequest(BaseModel):
+    target_person_id: UUID
+    source_person_ids: list[UUID] = Field(min_length=1, max_length=50)
+
+
+class PersonSplitRequest(BaseModel):
+    tracking_ids: list[UUID] = Field(min_length=1, max_length=500)
+    display_name: str | None = Field(default=None, max_length=100)
+
+
+class PersonTrackingResponse(BaseModel):
+    id: UUID
+    camera_id: UUID
+    byte_track_id: int
+    started_at: datetime
+    ended_at: datetime | None
+    is_active: bool
+    embedding_count: int
+    event_count: int
+
+
+class ReIdConfigurationResponse(BaseModel):
+    similarity_threshold: float
+    ambiguity_margin: float
+    minimum_quality: float
+    retention_days: int
+    minimum_templates_per_person: int
+    maximum_templates_per_person: int
 
 
 class SnapshotResponse(BaseModel):

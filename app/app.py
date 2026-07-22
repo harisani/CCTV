@@ -17,6 +17,7 @@ from app.services.user_service import ensure_bootstrap_admin
 from app.services.backup_scheduler import BackupScheduler
 from app.services.disaster_recovery_scheduler import DisasterRecoveryScheduler
 from app.services.realtime_pipeline import RealtimePipelineFactory
+from app.services.reid_retention_service import ReIdRetentionService
 
 
 @asynccontextmanager
@@ -29,12 +30,16 @@ async def lifespan(_: FastAPI):
     camera_runtime: CameraRuntimeManager | None = None
     backup_scheduler: BackupScheduler | None = None
     dr_scheduler: DisasterRecoveryScheduler | None = None
+    reid_retention: ReIdRetentionService | None = None
     if settings.enable_backup_scheduler:
         backup_scheduler = BackupScheduler(settings, SessionLocal)
         await backup_scheduler.start()
     if settings.enable_dr_scheduler:
         dr_scheduler = DisasterRecoveryScheduler(settings, SessionLocal)
         await dr_scheduler.start()
+    if settings.enable_reid_retention:
+        reid_retention = ReIdRetentionService(settings, SessionLocal)
+        await reid_retention.start()
     if settings.enable_camera_runtime:
         pipeline_factory = (
             RealtimePipelineFactory(settings, SessionLocal)
@@ -55,6 +60,8 @@ async def lifespan(_: FastAPI):
             await backup_scheduler.stop()
         if dr_scheduler is not None:
             await dr_scheduler.stop()
+        if reid_retention is not None:
+            await reid_retention.stop()
         if camera_runtime is not None:
             await camera_runtime.stop()
         await engine.dispose()

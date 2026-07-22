@@ -36,7 +36,7 @@ services:
     restart: unless-stopped
 
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
@@ -50,6 +50,14 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
+
+  mediamtx:
+    image: bluenviron/mediamtx:1.18.2
+    profiles: ["webcam"]
+    ports:
+      - "8554:8554"
+      - "8889:8889"
     restart: unless-stopped
 
 volumes:

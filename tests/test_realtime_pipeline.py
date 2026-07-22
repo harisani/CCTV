@@ -21,6 +21,7 @@ class PipelineSettings:
     ai_event_retry_queue_size = 10
     reid_min_crop_width = 10
     reid_min_crop_height = 10
+    reid_min_quality_score = 0.45
     storage_path = "storage"
 
 
@@ -60,6 +61,9 @@ class FakeReIdentification:
 
     def extract_embedding(self, _crop: object) -> tuple[float, ...]:
         return (1.0,) + (0.0,) * 511
+
+    def quality_score(self, _crop: object, *, detector_confidence: float) -> float:
+        return detector_confidence
 
 
 class FakeCrossing:
@@ -109,8 +113,11 @@ class FakePersistence:
     async def close_camera_trackings(self, _camera_id: UUID) -> None:
         pass
 
-    async def identify_person(self, _service: object, _embedding: object) -> UUID:
-        return self.person_id
+    async def identify_person(self, _service: object, _embedding: object, **_fields: object) -> object:
+        return SimpleNamespace(person_id=self.person_id, embedding_id=uuid4())
+
+    async def link_embedding(self, _embedding_id: UUID, _tracking_id: UUID) -> None:
+        pass
 
     async def start_tracking(self, **_fields: object) -> UUID:
         self.started += 1

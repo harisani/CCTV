@@ -22,6 +22,7 @@ import KeyOutlinedIcon from '@mui/icons-material/KeyOutlined'
 import WifiTetheringIcon from '@mui/icons-material/WifiTethering'
 import { api } from '../api'
 import BackupAdministration from './BackupAdministration'
+import IdentityAdministration from './IdentityAdministration'
 
 const roles = ['SUPER_ADMIN', 'ADMIN', 'SUPERVISOR', 'OPERATOR', 'AUDITOR']
 const roleLabel = value => value?.replaceAll('_', ' ') || '—'
@@ -225,6 +226,7 @@ export default function Administration({ token, currentUser, cameras, onReloadCa
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const canManageUsers = currentUser?.role === 'SUPER_ADMIN'
+  const canManageIdentities = ['SUPER_ADMIN', 'ADMIN'].includes(currentUser?.role)
 
   const loadUsers = async () => {
     if (!canManageUsers) return
@@ -244,6 +246,7 @@ export default function Administration({ token, currentUser, cameras, onReloadCa
     <Tabs className="admin-tabs" value={section} onChange={(_, value) => setSection(value)} variant="scrollable" scrollButtons="auto">
       <Tab value="cameras" label="Kamera" />
       {canManageUsers && <Tab value="users" label="Pengguna & role" />}
+      {canManageIdentities && <Tab value="identities" label="Identitas ReID" />}
       {canManageUsers && <Tab value="backups" label="Backup & arsip" />}
     </Tabs>
 
@@ -263,6 +266,7 @@ export default function Administration({ token, currentUser, cameras, onReloadCa
     </section>}
 
     {section === 'backups' && canManageUsers && <BackupAdministration token={token} />}
+    {section === 'identities' && canManageIdentities && <IdentityAdministration token={token} />}
 
     <CameraDialog open={cameraDialog.open} camera={cameraDialog.camera} token={token} onClose={() => setCameraDialog({ open: false, camera: null })} onSaved={onReloadCameras} />
     <UserDialog open={userDialog.open} user={userDialog.user} token={token} onClose={() => setUserDialog({ open: false, user: null })} onSaved={loadUsers} />
