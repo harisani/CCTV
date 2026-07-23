@@ -21,6 +21,11 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
 
 
+class EvidenceAccessResponse(BaseModel):
+    content_url: str
+    expires_at: datetime
+
+
 class UserCreate(BaseModel):
     username: str = Field(min_length=3, max_length=80, pattern=r"^[a-zA-Z0-9._-]+$")
     full_name: str = Field(min_length=2, max_length=150)
@@ -168,7 +173,7 @@ class EventResponse(BaseModel):
     line_id: str
     centroid: dict[str, float]
     occurred_at: datetime
-    snapshot_url: str | None = None
+    snapshot_id: UUID | None = None
     camera_id: UUID | None = None
     camera_name: str | None = None
     camera_location: str | None = None

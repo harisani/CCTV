@@ -147,9 +147,11 @@ class FakePersistence:
             return False, {"reason": "orphan_exit", "discard_snapshot": True}
         self.persisted += 1
         crossing = fields["crossing"]
+        snapshot = fields["snapshot"]
         return True, {
             "id": str(crossing.event_id),
             "event_type": crossing.event_type.value,
+            "snapshot_id": str(snapshot.snapshot_id) if snapshot else None,
         }
 
     async def current_occupancy(self) -> dict[str, int]:
@@ -207,6 +209,9 @@ class RealtimePipelineTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(persistence.started, 1)
             self.assertEqual(second.tracks[0]["tracking_id"], 7)
             self.assertEqual(second.events[0]["event_type"], "ENTER")
+            self.assertIsNotNone(second.events[0]["snapshot_id"])
+            self.assertNotIn("snapshot_url", second.events[0])
+            self.assertNotIn("snapshot_path", second.events[0])
             self.assertEqual(second.occupancy["total"], 1)
             self.assertEqual(persistence.persisted, 1)
             self.assertTrue((Path(directory) / "event.jpg").is_file())
@@ -228,6 +233,9 @@ class RealtimePipelineTest(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(0.02)
             retried = await pipeline.process(SimpleNamespace())
             self.assertEqual(retried.events[0]["event_type"], "ENTER")
+            self.assertIsNotNone(retried.events[0]["snapshot_id"])
+            self.assertNotIn("snapshot_url", retried.events[0])
+            self.assertNotIn("snapshot_path", retried.events[0])
             self.assertEqual(persistence.persisted, 1)
 
     async def test_rejected_crossing_removes_unpersisted_snapshot(self) -> None:

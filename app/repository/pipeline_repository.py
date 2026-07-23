@@ -234,7 +234,7 @@ class PipelineRepository:
                 "line_id": event.line_id,
                 "centroid": event.centroid,
                 "occurred_at": event.occurred_at.isoformat(),
-                "snapshot_path": str(snapshot.image_path) if snapshot else None,
+                "snapshot_id": str(snapshot.snapshot_id) if snapshot else None,
             }
 
     @staticmethod

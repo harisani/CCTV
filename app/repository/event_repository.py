@@ -32,7 +32,7 @@ class EventRepository(BaseRepository[Event]):
         end_at: datetime | None = None,
         offset: int = 0,
         limit: int = 100,
-    ) -> tuple[list[tuple[Event, str | None, UUID, str, str | None, int]], int]:
+    ) -> tuple[list[tuple[Event, UUID | None, UUID, str, str | None, int]], int]:
         from sqlalchemy import func
 
         filters = []
@@ -55,7 +55,7 @@ class EventRepository(BaseRepository[Event]):
             .outerjoin(Snapshot, Snapshot.event_id == Event.id)
             .join(Camera, Camera.id == Tracking.camera_id)
             .add_columns(
-                Snapshot.image_path,
+                Snapshot.id,
                 Tracking.camera_id,
                 Camera.name,
                 Camera.location,

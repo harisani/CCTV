@@ -7,7 +7,6 @@ import logging
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 from uuid import UUID
 
@@ -356,7 +355,6 @@ class CameraRealtimePipeline:
                     payload.get("reason"),
                 )
             return None
-        payload["snapshot_url"] = self._snapshot_url(pending.snapshot)
         return payload
 
     async def _flush_pending_events(self) -> list[dict[str, Any]]:
@@ -409,17 +407,6 @@ class CameraRealtimePipeline:
             "centroid": list(track.centroid),
             "direction": track.direction,
         }
-
-    def _snapshot_url(self, snapshot: SnapshotResult | None) -> str | None:
-        if snapshot is None:
-            return None
-        path = Path(snapshot.image_path).resolve()
-        root = Path(self._settings.storage_path).resolve()
-        try:
-            return f"/storage/{path.relative_to(root).as_posix()}"
-        except ValueError:
-            return None
-
 
 class RealtimePipelineFactory:
     """Share model weights while producing isolated stateful camera pipelines."""
