@@ -24,3 +24,11 @@ export async function login(username, password) {
   if (!response.ok) throw new Error('Username atau password salah')
   return response.json()
 }
+
+export async function requestSnapshotUrl(snapshotId, token) {
+  if (!snapshotId) throw new Error('Snapshot tidak tersedia')
+  const grant = await api(`/evidence/snapshots/${snapshotId}/access`, token, {
+    method: 'POST',
+  })
+  return new URL(grant.content_url, API_BASE).toString()
+}

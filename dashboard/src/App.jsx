@@ -20,7 +20,7 @@ import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined'
 import CameraSidebar from './components/CameraSidebar'
 import LiveGrid from './components/LiveGrid'
 import Administration from './components/Administration'
-import { API_BASE, api, login } from './api'
+import { api, login, requestSnapshotUrl } from './api'
 import { useDashboardSocket } from './useDashboardSocket'
 
 const formatDateTime = value => {
@@ -177,8 +177,8 @@ function EventHistory({ events, total, page, rowsPerPage, date, onDate, onPage, 
                 className="action-button"
                 size="small"
                 variant="outlined"
-                onClick={() => onSnapshot(event.snapshot_url)}
-                disabled={!event.snapshot_url}
+                onClick={() => onSnapshot(event.snapshot_id)}
+                disabled={!event.snapshot_id}
               >
                 Lihat foto
               </Button>
@@ -430,8 +430,6 @@ function App() {
   const selectedCameras = selectedIds.map(id => camerasWithStatus.find(camera => camera.id === id)).filter(Boolean)
   const onlineCount = camerasWithStatus.filter(camera => camera.effectiveStatus === 'ONLINE').length
   const offlineCount = camerasWithStatus.length - onlineCount
-  const snapshotUrl = value => value ? `${API_BASE.replace(/\/api\/v1$/, '')}${value}` : null
-
   const changeGridSize = value => {
     setGridSize(value)
     setSelectedIds(current => current.slice(0, value))
@@ -462,6 +460,15 @@ function App() {
   }
 
   const canAdminister = ['SUPER_ADMIN', 'ADMIN'].includes(currentUser?.role)
+
+  const openSnapshot = useCallback(async snapshotId => {
+    if (!snapshotId) return
+    try {
+      setSnapshot(await requestSnapshotUrl(snapshotId, token))
+    } catch (err) {
+      setError(err.message)
+    }
+  }, [token])
 
   const commandItems = useMemo(() => {
     const normalized = commandQuery.trim().toLowerCase()
@@ -502,11 +509,11 @@ function App() {
         meta: `#${event.tracking_id ?? '—'}`,
         action: () => {
           document.getElementById('event-history')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-          if (event.snapshot_url) setSnapshot(snapshotUrl(event.snapshot_url))
+          if (event.snapshot_id) openSnapshot(event.snapshot_id)
         },
       }))
     return [...cameraItems, ...personItems, ...eventItems]
-  }, [commandQuery, camerasWithStatus, persons, events, gridSize])
+  }, [commandQuery, camerasWithStatus, persons, events, gridSize, openSnapshot])
 
   const chooseCommand = item => {
     item?.action()
@@ -600,7 +607,7 @@ function App() {
           onDate={value => { setDate(value); setEventPage(0) }}
           onPage={setEventPage}
           onRowsPerPage={value => { setRowsPerPage(value); setEventPage(0) }}
-          onSnapshot={value => setSnapshot(snapshotUrl(value))}
+          onSnapshot={openSnapshot}
         />
         <IdentityPanel persons={persons} search={personSearch} onSearch={setPersonSearch} />
       </div>
