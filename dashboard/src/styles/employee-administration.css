@@ -1,0 +1,323 @@
+/* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4
+ * Hallmark · genre: modern-minimal · macrostructure: Catalogue · theme: Cobalt
+ * tone: technical-utilitarian · audience: admin IT/super admin · enrichment: none
+ * contrast: pass (40–41) · nav: N13 · footer: Ft2 · slop: pass (42–45)
+ * honest: pass (46) · chrome: pass (47) · tokens: pass (48) · icons: pass (30)
+ * responsive: pass (34, 49) · mobile: pass (34, 49, 50–57)
+ */
+
+.employee-admin {
+  min-width: 0;
+}
+
+.employee-admin__head {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-md);
+  margin-block-end: var(--space-lg);
+}
+
+.employee-admin__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
+.employee-admin__actions .MuiButton-root,
+.employee-card-panel__head .MuiButton-root {
+  min-height: 2.75rem;
+  white-space: nowrap;
+}
+
+.employee-file-input {
+  position: fixed;
+  width: 1px;
+  height: 1px;
+  overflow: clip;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.employee-notice {
+  margin-block-end: var(--space-lg);
+  border: var(--rule-thin) solid var(--color-success) !important;
+  border-radius: var(--radius-sm) !important;
+  background: var(--color-success-soft) !important;
+  color: var(--color-success) !important;
+}
+
+.employee-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-sm);
+  margin-block-end: var(--space-lg);
+}
+
+.employee-catalogue {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-xl);
+}
+
+.employee-directory {
+  min-width: 0;
+}
+
+.employee-directory .MuiTablePagination-root {
+  color: var(--color-ink-2);
+}
+
+.employee-table tr[data-selected="true"] {
+  background: var(--color-accent-soft);
+  color: var(--color-ink);
+}
+
+.employee-select {
+  display: grid;
+  width: 100%;
+  min-height: 2.75rem;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  background: transparent;
+  color: var(--color-ink);
+  font-family: var(--font-body);
+  text-align: start;
+  cursor: pointer;
+  transition:
+    background-color var(--dur-short) var(--ease-out),
+    transform var(--dur-micro) var(--ease-out);
+}
+
+.employee-select__icon {
+  display: grid;
+  width: 2.5rem;
+  height: 2.5rem;
+  place-items: center;
+  border: var(--rule-thin) solid var(--color-rule-2);
+  border-radius: var(--radius-sm);
+  color: var(--color-accent);
+}
+
+.employee-select strong,
+.employee-select small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.employee-select strong {
+  color: var(--color-ink);
+  font-size: var(--text-sm);
+}
+
+.employee-select small {
+  margin-block-start: var(--space-2xs);
+  color: var(--color-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.employee-select:focus-visible {
+  outline-color: var(--color-focus);
+}
+
+.employee-select:active {
+  transform: translateY(1px);
+}
+
+.employee-card-panel {
+  min-width: 0;
+  padding-block-start: var(--space-lg);
+  border-block-start: var(--rule-thin) solid var(--color-rule-2);
+}
+
+.employee-card-panel__head {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin-block-end: var(--space-md);
+}
+
+.employee-card-panel__head h3 {
+  min-width: 0;
+  margin: 0;
+  color: var(--color-ink);
+  font-family: var(--font-display);
+  font-size: var(--text-md);
+  font-style: normal;
+  overflow-wrap: anywhere;
+}
+
+.employee-card-panel__head p {
+  margin: var(--space-2xs) 0 0;
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+}
+
+.rfid-card-list {
+  margin: var(--space-md) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rfid-card-list li {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-sm);
+  padding-block: var(--space-sm);
+  border-block-end: var(--rule-thin) solid var(--color-rule);
+}
+
+.rfid-card-list__identity {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-sm);
+  color: var(--color-accent);
+}
+
+.rfid-card-list__identity strong,
+.rfid-card-list__identity small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rfid-card-list__identity strong {
+  color: var(--color-ink);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+.rfid-card-list__identity small,
+.rfid-card-list__meta > span {
+  color: var(--color-muted);
+  font-size: var(--text-xs);
+}
+
+.rfid-card-list__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.rfid-card-list__meta .MuiButton-root {
+  min-height: 2.75rem;
+  margin-inline-start: auto;
+  white-space: nowrap;
+}
+
+.rfid-validity-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-md);
+}
+
+.employee-empty {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-xs);
+  padding-block: var(--space-xl);
+  color: var(--color-muted);
+}
+
+.employee-empty > svg {
+  color: var(--color-accent);
+}
+
+.employee-empty strong {
+  color: var(--color-ink);
+}
+
+.employee-empty span {
+  font-size: var(--text-sm);
+}
+
+.employee-empty--cards {
+  padding-block: var(--space-2xl);
+}
+
+.employee-import-note {
+  margin: var(--space-lg) 0 0;
+  padding-block-start: var(--space-sm);
+  border-block-start: var(--rule-thin) solid var(--color-rule);
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+}
+
+.employee-import-note code {
+  color: var(--color-ink-2);
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .employee-select:hover {
+    background: var(--color-paper-2);
+    color: var(--color-ink);
+  }
+}
+
+@media (min-width: 40rem) {
+  .employee-admin__head,
+  .employee-card-panel__head {
+    flex-direction: row;
+    align-items: flex-start;
+    justify-content: space-between;
+  }
+
+  .employee-toolbar {
+    grid-template-columns: minmax(0, 1.4fr) minmax(10rem, 0.8fr) minmax(9rem, 0.5fr);
+  }
+
+  .rfid-validity-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .rfid-card-list li {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+}
+
+@media (min-width: 60rem) {
+  .employee-catalogue {
+    grid-template-columns: minmax(0, 1.55fr) minmax(20rem, 0.75fr);
+    gap: var(--space-xl);
+  }
+
+  .employee-card-panel {
+    padding-block-start: 0;
+    padding-inline-start: var(--space-xl);
+    border-block-start: 0;
+    border-inline-start: var(--rule-thin) solid var(--color-rule-2);
+  }
+}
+
+@media (pointer: coarse) {
+  .employee-select,
+  .employee-admin__actions .MuiButton-root,
+  .employee-card-panel__head .MuiButton-root,
+  .rfid-card-list__meta .MuiButton-root {
+    min-height: 3rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .employee-select {
+    transition-duration: var(--dur-micro);
+    transform: none !important;
+  }
+}

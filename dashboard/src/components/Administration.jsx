@@ -23,6 +23,8 @@ import WifiTetheringIcon from '@mui/icons-material/WifiTethering'
 import { api } from '../api'
 import BackupAdministration from './BackupAdministration'
 import IdentityAdministration from './IdentityAdministration'
+import EmployeeAdministration from './EmployeeAdministration'
+import RFIDSimulator from './RFIDSimulator'
 
 const roles = ['SUPER_ADMIN', 'ADMIN', 'SUPERVISOR', 'OPERATOR', 'AUDITOR']
 const roleLabel = value => value?.replaceAll('_', ' ') || '—'
@@ -227,6 +229,7 @@ export default function Administration({ token, currentUser, cameras, onReloadCa
   const [notice, setNotice] = useState('')
   const canManageUsers = currentUser?.role === 'SUPER_ADMIN'
   const canManageIdentities = ['SUPER_ADMIN', 'ADMIN'].includes(currentUser?.role)
+  const canManageEmployees = ['SUPER_ADMIN', 'ADMIN'].includes(currentUser?.role)
 
   const loadUsers = async () => {
     if (!canManageUsers) return
@@ -245,6 +248,8 @@ export default function Administration({ token, currentUser, cameras, onReloadCa
     {notice && <Alert className="error-banner" severity="success" onClose={() => setNotice('')}>{notice}</Alert>}
     <Tabs className="admin-tabs" value={section} onChange={(_, value) => setSection(value)} variant="scrollable" scrollButtons="auto">
       <Tab value="cameras" label="Kamera" />
+      {canManageEmployees && <Tab value="employees" label="Pegawai & RFID" />}
+      {canManageEmployees && <Tab value="rfid-simulator" label="Simulator RFID" />}
       {canManageUsers && <Tab value="users" label="Pengguna & role" />}
       {canManageIdentities && <Tab value="identities" label="Identitas ReID" />}
       {canManageUsers && <Tab value="backups" label="Backup & arsip" />}
@@ -265,6 +270,8 @@ export default function Administration({ token, currentUser, cameras, onReloadCa
       </tbody></table></div>
     </section>}
 
+    {section === 'employees' && canManageEmployees && <EmployeeAdministration token={token} />}
+    {section === 'rfid-simulator' && canManageEmployees && <RFIDSimulator token={token} />}
     {section === 'backups' && canManageUsers && <BackupAdministration token={token} />}
     {section === 'identities' && canManageIdentities && <IdentityAdministration token={token} />}
 

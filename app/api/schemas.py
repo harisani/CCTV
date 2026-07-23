@@ -4,7 +4,16 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from urllib.parse import urlparse
-from app.models import BackupSource, BackupStatus, DisasterRecoveryStatus, UserRole
+from app.models import (
+    AccessDirection,
+    AccessEventStatus,
+    BackupSource,
+    BackupStatus,
+    DisasterRecoveryStatus,
+    RFIDCardStatus,
+    RFIDReaderDirection,
+    UserRole,
+)
 
 T = TypeVar("T")
 
@@ -55,6 +64,239 @@ class UserResponse(BaseModel):
     must_change_password: bool
     last_login_at: datetime | None
     created_at: datetime
+
+
+class EmployeeCreate(BaseModel):
+    employee_number: str = Field(
+        min_length=1,
+        max_length=80,
+        pattern=r"^[a-zA-Z0-9._/-]+$",
+    )
+    full_name: str = Field(min_length=2, max_length=150)
+    department: str | None = Field(default=None, max_length=120)
+    is_active: bool = True
+
+    @field_validator("employee_number", "full_name", mode="before")
+    @classmethod
+    def strip_required_employee_fields(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("department")
+    @classmethod
+    def normalize_optional_department(cls, value: str | None) -> str | None:
+        normalized = value.strip() if value else None
+        return normalized or None
+
+
+class EmployeeUpdate(BaseModel):
+    employee_number: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=80,
+        pattern=r"^[a-zA-Z0-9._/-]+$",
+    )
+    full_name: str | None = Field(default=None, min_length=2, max_length=150)
+    department: str | None = Field(default=None, max_length=120)
+    is_active: bool | None = None
+
+    @field_validator("employee_number", "full_name", mode="before")
+    @classmethod
+    def strip_optional_employee_fields(cls, value: str | None) -> str | None:
+        return value.strip() if value is not None else None
+
+    @field_validator("department")
+    @classmethod
+    def normalize_optional_department(cls, value: str | None) -> str | None:
+        normalized = value.strip() if value else None
+        return normalized or None
+
+    @model_validator(mode="after")
+    def validate_employee_changes(self) -> "EmployeeUpdate":
+        if not self.model_fields_set:
+            raise ValueError("Kirim minimal satu perubahan data pegawai")
+        for field in ("employee_number", "full_name", "is_active"):
+            if field in self.model_fields_set and getattr(self, field) is None:
+                raise ValueError(f"{field} tidak boleh null")
+        return self
+
+
+class EmployeeResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    employee_number: str
+    full_name: str
+    department: str | None
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class EmployeeImportResponse(BaseModel):
+    imported_count: int
+    total_rows: int
+
+
+class RFIDCardCreate(BaseModel):
+    card_number: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[a-zA-Z0-9:_-]+$",
+    )
+    label: str | None = Field(default=None, max_length=120)
+    status: RFIDCardStatus = RFIDCardStatus.ACTIVE
+    valid_from: datetime | None = None
+    valid_until: datetime | None = None
+
+    @field_validator("card_number", mode="before")
+    @classmethod
+    def normalize_card_number(cls, value: str) -> str:
+        return value.strip().upper()
+
+    @field_validator("label")
+    @classmethod
+    def normalize_card_label(cls, value: str | None) -> str | None:
+        normalized = value.strip() if value else None
+        return normalized or None
+
+    @field_validator("valid_from", "valid_until")
+    @classmethod
+    def require_timezone(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.tzinfo is None:
+            raise ValueError("Timestamp kartu harus menyertakan zona waktu")
+        return value
+
+    @model_validator(mode="after")
+    def validate_card_window(self) -> "RFIDCardCreate":
+        if (
+            self.valid_from is not None
+            and self.valid_until is not None
+            and self.valid_until < self.valid_from
+        ):
+            raise ValueError("Masa berlaku akhir tidak boleh sebelum tanggal mulai")
+        return self
+
+
+class RFIDCardUpdate(BaseModel):
+    label: str | None = Field(default=None, max_length=120)
+    status: RFIDCardStatus | None = None
+    valid_from: datetime | None = None
+    valid_until: datetime | None = None
+
+    @field_validator("label")
+    @classmethod
+    def normalize_card_label(cls, value: str | None) -> str | None:
+        normalized = value.strip() if value else None
+        return normalized or None
+
+    @field_validator("valid_from", "valid_until")
+    @classmethod
+    def require_timezone(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.tzinfo is None:
+            raise ValueError("Timestamp kartu harus menyertakan zona waktu")
+        return value
+
+    @model_validator(mode="after")
+    def validate_card_changes(self) -> "RFIDCardUpdate":
+        if not self.model_fields_set:
+            raise ValueError("Kirim minimal satu perubahan kartu RFID")
+        if "status" in self.model_fields_set and self.status is None:
+            raise ValueError("status kartu tidak boleh null")
+        return self
+
+
+class RFIDCardResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    employee_id: UUID
+    card_number: str
+    label: str | None
+    status: RFIDCardStatus
+    valid_from: datetime | None
+    valid_until: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class RFIDSimulatorTapRequest(BaseModel):
+    card_number: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[a-zA-Z0-9:_-]+$",
+    )
+    direction: AccessDirection
+    occurred_at: datetime | None = None
+    idempotency_key: str | None = Field(
+        default=None,
+        min_length=8,
+        max_length=120,
+        pattern=r"^[a-zA-Z0-9._:-]+$",
+    )
+
+    @field_validator("card_number", mode="before")
+    @classmethod
+    def normalize_simulated_card_number(cls, value: str) -> str:
+        return value.strip().upper()
+
+    @field_validator("idempotency_key", mode="before")
+    @classmethod
+    def normalize_idempotency_key(cls, value: str | None) -> str | None:
+        normalized = value.strip() if value else None
+        return normalized or None
+
+    @field_validator("occurred_at")
+    @classmethod
+    def require_simulator_timezone(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.tzinfo is None:
+            raise ValueError("occurred_at harus menyertakan zona waktu")
+        return value
+
+
+class RFIDSimulatorReaderResponse(BaseModel):
+    code: str
+    name: str
+    location: str | None
+    direction: RFIDReaderDirection
+
+
+class RFIDSimulatorCardOption(BaseModel):
+    card_number: str
+    label: str | None
+    employee_id: UUID
+    employee_number: str
+    employee_name: str
+    department: str | None
+
+
+class RFIDSimulatorOptionsResponse(BaseModel):
+    enabled: bool
+    reader: RFIDSimulatorReaderResponse
+    cards: list[RFIDSimulatorCardOption]
+    event_ttl_seconds: int
+
+
+class RFIDAccessEventResponse(BaseModel):
+    id: UUID
+    external_event_id: str
+    reader_code: str
+    reader_name: str
+    card_number: str
+    card_id: UUID | None
+    employee_id: UUID | None
+    employee_number: str | None
+    employee_name: str | None
+    direction: AccessDirection
+    status: AccessEventStatus
+    status_reason: str | None
+    occurred_at: datetime
+    expires_at: datetime
+    simulated: bool
+
+
+class RFIDSimulatorTapResponse(BaseModel):
+    created: bool
+    event: RFIDAccessEventResponse
 
 
 class CameraCreate(BaseModel):

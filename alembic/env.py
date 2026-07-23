@@ -8,7 +8,18 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from app.config.settings import get_settings
 from app.database.base import Base
-from app.models import Camera, Event, Person, Snapshot, Tracking  # noqa: F401
+from app.models import (  # noqa: F401
+    AccessCameraMatch,
+    AccessEvent,
+    Camera,
+    Employee,
+    Event,
+    Person,
+    RFIDCard,
+    RFIDReader,
+    Snapshot,
+    Tracking,
+)
 
 config = context.config
 config.set_main_option("sqlalchemy.url", str(get_settings().database_url))
