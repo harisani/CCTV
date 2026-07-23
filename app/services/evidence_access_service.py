@@ -13,9 +13,17 @@ import jwt
 
 @dataclass(frozen=True, slots=True)
 class EvidenceGrant:
-    token: str
+    access_token: str
     content_url: str
     expires_at: datetime
+    grant_id: UUID
+
+
+@dataclass(frozen=True, slots=True)
+class EvidenceAuthorization:
+    user_id: UUID
+    token_version: int
+    grant_id: UUID
 
 
 class EvidenceAccessService:
@@ -28,36 +36,52 @@ class EvidenceAccessService:
         if len(self._secret) < 32:
             raise ValueError("Evidence signing secret must contain at least 32 characters")
 
-    def issue_snapshot(self, snapshot_id: UUID, user_id: UUID) -> EvidenceGrant:
+    def issue_snapshot(
+        self,
+        snapshot_id: UUID,
+        user_id: UUID,
+        token_version: int,
+    ) -> EvidenceGrant:
         expires_at = datetime.now(UTC) + timedelta(seconds=self._expire_seconds)
+        grant_id = uuid4()
         token = jwt.encode(
             {
                 "typ": "evidence-access",
                 "snapshot_id": str(snapshot_id),
                 "sub": str(user_id),
-                "jti": str(uuid4()),
+                "ver": token_version,
+                "jti": str(grant_id),
                 "exp": expires_at,
             },
             self._secret,
             algorithm=self.algorithm,
         )
         return EvidenceGrant(
-            token=token,
-            content_url=(
-                f"/api/v1/evidence/snapshots/{snapshot_id}/content"
-                f"?access_token={token}"
-            ),
+            access_token=token,
+            content_url=f"/api/v1/evidence/snapshots/{snapshot_id}/content",
             expires_at=expires_at,
+            grant_id=grant_id,
         )
 
-    def authorize_snapshot(self, token: str, snapshot_id: UUID) -> UUID:
+    def authorize_snapshot(
+        self,
+        token: str,
+        snapshot_id: UUID,
+    ) -> EvidenceAuthorization:
         try:
             payload = jwt.decode(token, self._secret, algorithms=[self.algorithm])
             if payload.get("typ") != "evidence-access":
                 raise ValueError("Evidence token has an invalid purpose")
             if payload.get("snapshot_id") != str(snapshot_id):
                 raise ValueError("Evidence token is not valid for this snapshot")
-            return UUID(payload["sub"])
+            token_version = payload["ver"]
+            if type(token_version) is not int:
+                raise TypeError("Evidence token version must be an integer")
+            return EvidenceAuthorization(
+                user_id=UUID(payload["sub"]),
+                token_version=token_version,
+                grant_id=UUID(payload["jti"]),
+            )
         except jwt.PyJWTError as error:
             raise ValueError("Evidence token is invalid or expired") from error
         except (KeyError, TypeError, ValueError) as error:

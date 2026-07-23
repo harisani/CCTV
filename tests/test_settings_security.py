@@ -46,6 +46,38 @@ def test_production_accepts_explicit_secure_configuration() -> None:
     assert settings.evidence_access_token_expire_seconds == 60
 
 
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (" Development ", "development"),
+        ("TEST", "test"),
+        (" Production ", "production"),
+    ],
+)
+def test_application_environment_is_normalized(value: str, expected: str) -> None:
+    values = secure_values()
+    values["app_env"] = value
+
+    assert Settings(**values).app_env == expected
+
+
+@pytest.mark.parametrize("value", ["prod", "staging", "produciton", ""])
+def test_application_environment_rejects_unknown_values(value: str) -> None:
+    values = secure_values()
+    values["app_env"] = value
+
+    with pytest.raises(ValidationError):
+        Settings(**values)
+
+
+def test_production_rejects_shared_jwt_and_evidence_signing_secret() -> None:
+    values = secure_values()
+    values["evidence_signing_secret"] = values["jwt_secret"]
+
+    with pytest.raises(ValidationError, match="must differ"):
+        Settings(**values)
+
+
 @pytest.mark.parametrize("seconds", [9, 301])
 def test_evidence_access_expiry_is_bounded(seconds: int) -> None:
     values = secure_values()

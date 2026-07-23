@@ -2,7 +2,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, PostgresDsn, computed_field, model_validator
+from pydantic import Field, PostgresDsn, computed_field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     app_name: str = "CCTV People Flow"
-    app_env: str = "development"
+    app_env: Literal["development", "test", "production"] = "development"
     debug: bool = False
     api_host: str = "0.0.0.0"
     api_port: int = 8000
@@ -137,9 +137,14 @@ class Settings(BaseSettings):
     torch_num_threads: int = Field(default=0, ge=0)
     opencv_num_threads: int = Field(default=0, ge=0)
 
+    @field_validator("app_env", mode="before")
+    @classmethod
+    def normalize_app_env(cls, value: object) -> object:
+        return value.strip().lower() if isinstance(value, str) else value
+
     @model_validator(mode="after")
     def validate_security_configuration(self) -> "Settings":
-        if self.app_env.strip().lower() != "production":
+        if self.app_env != "production":
             return self
 
         errors: list[str] = []
@@ -161,6 +166,8 @@ class Settings(BaseSettings):
             errors.append(
                 "EVIDENCE_SIGNING_SECRET must be a non-placeholder value of at least 32 characters"
             )
+        if self.jwt_secret == self.evidence_signing_secret:
+            errors.append("JWT_SECRET and EVIDENCE_SIGNING_SECRET must differ")
         if weak(self.postgres_password, minimum=16):
             errors.append(
                 "POSTGRES_PASSWORD must be a non-placeholder value of at least 16 characters"

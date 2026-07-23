@@ -56,7 +56,7 @@ def make_client(tmp_path: Path) -> tuple[TestClient, FakeSession, object]:
     image = tmp_path / "snapshot.jpg"
     image.write_bytes(b"snapshot-bytes")
     snapshot = SimpleNamespace(id=uuid4(), image_path=str(image))
-    user = SimpleNamespace(id=uuid4(), is_active=True)
+    user = SimpleNamespace(id=uuid4(), is_active=True, token_version=1)
     session = FakeSession(snapshot, user)
     settings = SimpleNamespace(
         storage_path=tmp_path,
@@ -80,25 +80,98 @@ def test_grant_and_content_are_audited(tmp_path: Path) -> None:
 
     grant = client.post(f"/api/v1/evidence/snapshots/{snapshot.id}/access")
     assert grant.status_code == 200
+    assert grant.headers["cache-control"] == "no-store"
+    assert grant.json()["content_url"] == (
+        f"/api/v1/evidence/snapshots/{snapshot.id}/content"
+    )
+    assert "?" not in grant.json()["content_url"]
 
-    content = client.get(grant.json()["content_url"])
+    content = client.get(
+        grant.json()["content_url"],
+        headers={"Authorization": f"Bearer {grant.json()['access_token']}"},
+    )
     assert content.status_code == 200
     assert content.content == b"snapshot-bytes"
     assert content.headers["cache-control"] == "private, no-store"
+    assert content.headers["referrer-policy"] == "no-referrer"
     assert [item.action for item in session.added] == [
         "EVIDENCE_ACCESS_GRANTED",
         "EVIDENCE_SNAPSHOT_VIEWED",
     ]
+    assert session.commits == 2
+    grant_id = session.added[0].details["grant_id"]
+    assert grant_id
+    assert session.added[1].details["grant_id"] == grant_id
+
+
+def test_anonymous_evidence_grant_is_rejected(tmp_path: Path) -> None:
+    client, _, snapshot = make_client(tmp_path)
+    client.app.dependency_overrides.pop(require_authenticated_user)
+
+    response = client.post(f"/api/v1/evidence/snapshots/{snapshot.id}/access")
+
+    assert response.status_code == 401
+
+
+def test_content_rejects_missing_evidence_bearer_credential(tmp_path: Path) -> None:
+    client, _, snapshot = make_client(tmp_path)
+
+    response = client.get(f"/api/v1/evidence/snapshots/{snapshot.id}/content")
+
+    assert response.status_code == 401
+
+
+def test_content_rejects_malformed_evidence_bearer_credential(
+    tmp_path: Path,
+) -> None:
+    client, _, snapshot = make_client(tmp_path)
+
+    response = client.get(
+        f"/api/v1/evidence/snapshots/{snapshot.id}/content",
+        headers={"Authorization": "Basic not-a-bearer-credential"},
+    )
+
+    assert response.status_code == 401
+
+
+def test_content_does_not_accept_evidence_token_in_query_string(
+    tmp_path: Path,
+) -> None:
+    client, _, snapshot = make_client(tmp_path)
+    grant = client.post(f"/api/v1/evidence/snapshots/{snapshot.id}/access")
+
+    response = client.get(
+        f"{grant.json()['content_url']}?access_token={grant.json()['access_token']}"
+    )
+
+    assert response.status_code == 401
 
 
 def test_content_rejects_invalid_signed_token(tmp_path: Path) -> None:
     client, _, snapshot = make_client(tmp_path)
 
     response = client.get(
-        f"/api/v1/evidence/snapshots/{snapshot.id}/content?access_token=invalid"
+        f"/api/v1/evidence/snapshots/{snapshot.id}/content",
+        headers={"Authorization": "Bearer invalid"},
     )
 
     assert response.status_code == 401
+
+
+def test_content_rejects_revoked_user_token_version(tmp_path: Path) -> None:
+    client, session, snapshot = make_client(tmp_path)
+    grant = client.post(f"/api/v1/evidence/snapshots/{snapshot.id}/access")
+    session.user.token_version += 1
+
+    response = client.get(
+        grant.json()["content_url"],
+        headers={"Authorization": f"Bearer {grant.json()['access_token']}"},
+    )
+
+    assert response.status_code == 401
+    assert response.content != b"snapshot-bytes"
+    assert [item.action for item in session.added] == ["EVIDENCE_ACCESS_GRANTED"]
+    assert session.commits == 1
 
 
 def test_application_has_no_public_storage_mount(monkeypatch, tmp_path: Path) -> None:

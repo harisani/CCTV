@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.responses import FileResponse
+from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_app_settings, get_database_session
 from app.api.schemas import EvidenceAccessResponse
-from app.api.security import require_authenticated_user
+from app.api.security import bearer_scheme, require_authenticated_user
 from app.config.settings import Settings
 from app.models import Snapshot, User
 from app.repository import AuditRepository
@@ -25,6 +26,7 @@ router = APIRouter(prefix="/evidence")
 )
 async def create_snapshot_access(
     snapshot_id: UUID,
+    response: Response,
     actor: User = Depends(require_authenticated_user),
     session: AsyncSession = Depends(get_database_session),
     settings: Settings = Depends(get_app_settings),
@@ -32,16 +34,25 @@ async def create_snapshot_access(
     snapshot = await session.get(Snapshot, snapshot_id)
     if snapshot is None:
         raise HTTPException(status_code=404, detail="Snapshot evidence not found")
-    grant = EvidenceAccessService(settings).issue_snapshot(snapshot.id, actor.id)
+    grant = EvidenceAccessService(settings).issue_snapshot(
+        snapshot.id,
+        actor.id,
+        actor.token_version,
+    )
     await AuditRepository(session).record(
         actor_user_id=actor.id,
         action="EVIDENCE_ACCESS_GRANTED",
         resource_type="snapshot",
         resource_id=str(snapshot.id),
-        details={"expires_at": grant.expires_at.isoformat()},
+        details={
+            "expires_at": grant.expires_at.isoformat(),
+            "grant_id": str(grant.grant_id),
+        },
     )
     await session.commit()
+    response.headers["Cache-Control"] = "no-store"
     return EvidenceAccessResponse(
+        access_token=grant.access_token,
         content_url=grant.content_url,
         expires_at=grant.expires_at,
     )
@@ -50,21 +61,33 @@ async def create_snapshot_access(
 @router.get("/snapshots/{snapshot_id}/content")
 async def read_snapshot_content(
     snapshot_id: UUID,
-    access_token: str = Query(min_length=1),
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     session: AsyncSession = Depends(get_database_session),
     settings: Settings = Depends(get_app_settings),
 ) -> FileResponse:
+    if credentials is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing or malformed evidence bearer token",
+        )
     service = EvidenceAccessService(settings)
     try:
-        user_id = service.authorize_snapshot(access_token, snapshot_id)
+        authorization = service.authorize_snapshot(
+            credentials.credentials,
+            snapshot_id,
+        )
     except ValueError as error:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=str(error),
         ) from error
 
-    user = await session.get(User, user_id)
-    if user is None or not user.is_active:
+    user = await session.get(User, authorization.user_id)
+    if (
+        user is None
+        or not user.is_active
+        or user.token_version != authorization.token_version
+    ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Evidence user session is invalid",
@@ -82,6 +105,7 @@ async def read_snapshot_content(
         action="EVIDENCE_SNAPSHOT_VIEWED",
         resource_type="snapshot",
         resource_id=str(snapshot.id),
+        details={"grant_id": str(authorization.grant_id)},
     )
     await session.commit()
     return FileResponse(
@@ -89,5 +113,8 @@ async def read_snapshot_content(
         media_type=media_type,
         filename=path.name,
         content_disposition_type="inline",
-        headers={"Cache-Control": "private, no-store"},
+        headers={
+            "Cache-Control": "private, no-store",
+            "Referrer-Policy": "no-referrer",
+        },
     )

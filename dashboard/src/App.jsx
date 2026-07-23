@@ -20,7 +20,8 @@ import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined'
 import CameraSidebar from './components/CameraSidebar'
 import LiveGrid from './components/LiveGrid'
 import Administration from './components/Administration'
-import { api, login, requestSnapshotUrl } from './api'
+import { api, login, requestSnapshotBlob } from './api'
+import { createSnapshotPreviewManager } from './snapshotPreview'
 import { useDashboardSocket } from './useDashboardSocket'
 
 const formatDateTime = value => {
@@ -329,6 +330,13 @@ function App() {
   const [currentUser, setCurrentUser] = useState(null)
   const [page, setPage] = useState('monitoring')
   const initializedSelection = useRef(false)
+  const snapshotManager = useMemo(() => createSnapshotPreviewManager({
+    requestBlob: requestSnapshotBlob,
+    onPreview: setSnapshot,
+    onError: err => setError(err.message),
+  }), [])
+
+  useEffect(() => () => snapshotManager.dispose(), [snapshotManager])
 
   const loadCameras = useCallback(async () => {
     if (!token) return
@@ -450,9 +458,8 @@ function App() {
   }
 
   const logout = () => {
-    localStorage.removeItem('cctv-token')
+    transitionToken('')
     initializedSelection.current = false
-    setToken('')
     setCameras([])
     setSelectedIds([])
     setCurrentUser(null)
@@ -461,14 +468,17 @@ function App() {
 
   const canAdminister = ['SUPER_ADMIN', 'ADMIN'].includes(currentUser?.role)
 
-  const openSnapshot = useCallback(async snapshotId => {
-    if (!snapshotId) return
-    try {
-      setSnapshot(await requestSnapshotUrl(snapshotId, token))
-    } catch (err) {
-      setError(err.message)
-    }
-  }, [token])
+  const transitionToken = useCallback(value => {
+    snapshotManager.invalidate()
+    if (value) localStorage.setItem('cctv-token', value)
+    else localStorage.removeItem('cctv-token')
+    setToken(value)
+  }, [snapshotManager])
+
+  const openSnapshot = useCallback(
+    snapshotId => snapshotManager.open(snapshotId, token),
+    [snapshotManager, token],
+  )
 
   const commandItems = useMemo(() => {
     const normalized = commandQuery.trim().toLowerCase()
@@ -522,7 +532,7 @@ function App() {
     setCommandIndex(0)
   }
 
-  if (!token) return <Login onLogin={value => { localStorage.setItem('cctv-token', value); setToken(value) }} />
+  if (!token) return <Login onLogin={transitionToken} />
 
   return <div className="app-shell">
     <header className="control-nav">
@@ -629,10 +639,10 @@ function App() {
       onClose={() => { setCommandOpen(false); setCommandQuery(''); setCommandIndex(0) }}
     />
 
-    <Dialog className="snapshot-dialog" open={Boolean(snapshot)} onClose={() => setSnapshot(null)} maxWidth="md" fullWidth>
+    <Dialog className="snapshot-dialog" open={Boolean(snapshot)} onClose={snapshotManager.close} maxWidth="md" fullWidth>
       <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         Preview snapshot
-        <IconButton className="icon-action" onClick={() => setSnapshot(null)} aria-label="Tutup preview"><CloseIcon /></IconButton>
+        <IconButton className="icon-action" onClick={snapshotManager.close} aria-label="Tutup preview"><CloseIcon /></IconButton>
       </DialogTitle>
       <DialogContent>{snapshot && <img className="snapshot-image" src={snapshot} alt="Snapshot event CCTV" />}</DialogContent>
     </Dialog>
@@ -640,8 +650,7 @@ function App() {
       open={Boolean(currentUser?.must_change_password)}
       token={token}
       onChanged={value => {
-        localStorage.setItem('cctv-token', value)
-        setToken(value)
+        transitionToken(value)
         api('/auth/me', value).then(setCurrentUser).catch(err => setError(err.message))
       }}
     />

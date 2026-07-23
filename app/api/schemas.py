@@ -22,6 +22,7 @@ class TokenResponse(BaseModel):
 
 
 class EvidenceAccessResponse(BaseModel):
+    access_token: str
     content_url: str
     expires_at: datetime
 

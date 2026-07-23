@@ -29,9 +29,17 @@ scrypt di PostgreSQL, bukan kembali ke `.env`.
 ## Security baseline
 
 - Never expose the API or dashboard directly to the internet without TLS and an approved reverse proxy.
-- Production startup rejects placeholder database, JWT, administrator, and evidence-signing secrets.
+- Production startup accepts only `development`, `test`, or `production` as
+  the application environment. Production rejects placeholder database, JWT,
+  administrator, and evidence-signing secrets, and requires separate JWT and
+  evidence-signing keys.
 - Keep `.env` outside Git with file permission `0600`; production secrets belong in the deployment secret manager.
-- Snapshot evidence is not public static content. The dashboard requests a short-lived signed URL, and every grant/view is audited.
+- Snapshot evidence is not public static content. After an authenticated grant,
+  the dashboard sends the short-lived evidence token only in the HTTP
+  `Authorization` header, fetches the image as a Blob, and renders a temporary
+  in-memory object URL. Evidence tokens never appear in URLs, inherit user
+  session revocation through `token_version`, and every grant/view is audited
+  with a shared grant ID.
 - Do not delete `storage/`, PostgreSQL volumes, or historical Alembic migrations during source cleanup.
 
 ## User Management dan RBAC

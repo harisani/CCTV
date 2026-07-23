@@ -1,4 +1,8 @@
-export const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1'
+export const API_BASE = import.meta.env?.VITE_API_BASE_URL || 'http://localhost:8000/api/v1'
+
+export function resolveApiUrl(path, apiBase = API_BASE, origin = globalThis.location?.origin || 'http://localhost') {
+  return new URL(path, new URL(apiBase, origin)).toString()
+}
 
 export async function api(path, token, options = {}) {
   const isForm = typeof FormData !== 'undefined' && options.body instanceof FormData
@@ -25,10 +29,16 @@ export async function login(username, password) {
   return response.json()
 }
 
-export async function requestSnapshotUrl(snapshotId, token) {
+export async function requestSnapshotBlob(snapshotId, token, signal) {
   if (!snapshotId) throw new Error('Snapshot tidak tersedia')
   const grant = await api(`/evidence/snapshots/${snapshotId}/access`, token, {
     method: 'POST',
+    signal,
   })
-  return new URL(grant.content_url, API_BASE).toString()
+  const response = await fetch(resolveApiUrl(grant.content_url), {
+    headers: { Authorization: `Bearer ${grant.access_token}` },
+    signal,
+  })
+  if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || 'Request failed')
+  return response.blob()
 }
