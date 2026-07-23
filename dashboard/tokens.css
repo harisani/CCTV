@@ -1,7 +1,7 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 · macrostructure: Workbench + Index-First administration
  * Hallmark · genre: modern-minimal · theme: Cobalt
  * tone: technical-utilitarian · audience: supervisor/admin IT/manajemen
- * anchor hue: 256 · enrichment: none · nav: N13 · footer: Ft2 · contrast: pass (40–41)
+ * anchor hue: 256 · enrichment: none · nav: N3 operational side rail · footer: Ft2 · contrast: pass (40–41)
  * honest: pass (46) · chrome: pass (47) · tokens: pass (48) · responsive: pass (49)
  * mobile: pass (34, 49, 50–57) · icons: pass (30) · slop: pass (42–45)
  */
@@ -72,6 +72,8 @@
   --radius-sm: 0.375rem;
   --radius-md: 0.625rem;
   --radius-lg: 0.875rem;
+
+  --navigation-width: 17rem;
 
   --z-base: 1;
   --z-raised: 10;

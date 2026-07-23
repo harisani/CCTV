@@ -83,6 +83,25 @@ class Settings(BaseSettings):
     presence_timezone: str = "Asia/Jakarta"
     presence_reconcile_interval_seconds: float = Field(default=30.0, ge=5)
 
+    # Development-only RFID reader simulator. Keep disabled in production.
+    enable_rfid_simulator: bool = False
+    rfid_simulator_reader_code: str = Field(
+        default="SIM-READER-01",
+        min_length=3,
+        max_length=80,
+        pattern=r"^[a-zA-Z0-9._-]+$",
+    )
+    rfid_simulator_reader_name: str = Field(
+        default="Simulator Pintu Utama",
+        min_length=2,
+        max_length=120,
+    )
+    rfid_simulator_reader_location: str = Field(
+        default="Pintu Utama",
+        max_length=150,
+    )
+    rfid_simulator_event_ttl_seconds: int = Field(default=30, ge=5, le=300)
+
     enable_backup_scheduler: bool = True
     backup_schedule_time: str = Field(
         default="00:15", pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$"

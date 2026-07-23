@@ -30,13 +30,13 @@ scrypt di PostgreSQL, bukan kembali ke `.env`.
 
 Menu **Administrasi** tersedia setelah login. Pembagian akses saat ini:
 
-| Role | Monitoring & histori | Kelola kamera | Kelola pengguna | Backup & arsip |
-| --- | --- | --- | --- | --- |
-| `SUPER_ADMIN` | Ya | Ya | Ya | Ya |
-| `ADMIN` | Ya | Ya | Tidak | Tidak |
-| `SUPERVISOR` | Ya | Tidak | Tidak | Tidak |
-| `OPERATOR` | Ya | Tidak | Tidak | Tidak |
-| `AUDITOR` | Ya | Tidak | Tidak | Tidak |
+| Role | Monitoring & histori | Kelola kamera | Pegawai & RFID | Kelola pengguna | Backup & arsip |
+| --- | --- | --- | --- | --- | --- |
+| `SUPER_ADMIN` | Ya | Ya | Ya | Ya | Ya |
+| `ADMIN` | Ya | Ya | Ya | Tidak | Tidak |
+| `SUPERVISOR` | Ya | Tidak | API baca-saja | Tidak | Tidak |
+| `OPERATOR` | Ya | Tidak | Tidak | Tidak | Tidak |
+| `AUDITOR` | Ya | Tidak | API baca-saja | Tidak | Tidak |
 
 Super admin dapat membuat pengguna, mengubah role/status, dan mereset password
 pengguna lain. Password sementara minimal 12 karakter dan wajib diganti oleh
@@ -48,6 +48,92 @@ Setiap perubahan pengguna atau kamera dicatat di tabel `audit_logs`. Tindakan
 DELETE kamera bersifat aman: kamera dinonaktifkan dari runtime, sedangkan
 tracking, event, dan snapshot historis tetap disimpan. Kamera dapat diaktifkan
 kembali dari form **Ubah konfigurasi kamera**.
+
+## Employee Management dan registrasi kartu RFID
+
+Menu **Administrasi → Pegawai & RFID** tersedia untuk `SUPER_ADMIN` dan
+`ADMIN`. Fitur Tahap 2 meliputi:
+
+- tambah, ubah, cari, filter, dan nonaktifkan pegawai tanpa menghapus histori;
+- registrasi satu atau beberapa kartu RFID untuk setiap pegawai;
+- status kartu `ACTIVE`, `BLOCKED`, `LOST`, atau `EXPIRED`;
+- masa berlaku opsional dengan timestamp ber-timezone;
+- impor CSV atomik maksimal 5.000 baris/2 MB;
+- pencegahan nomor pegawai dan UID kartu duplikat;
+- audit log untuk create/update/import/registrasi/perubahan kartu.
+
+Format file impor:
+
+```csv
+employee_number,full_name,department,is_active
+EMP-001,Budi Santoso,Produksi,true
+EMP-002,Sari Wulandari,Quality,false
+```
+
+Jika satu baris tidak valid atau nomor pegawai sudah tersedia, seluruh import
+dibatalkan agar tidak menghasilkan data setengah jadi. Pegawai nonaktif tidak
+dapat menerima kartu baru. Kartu lama tetap dipertahankan sebagai histori dan
+tidak akan dianggap valid oleh pencarian kartu aktif.
+
+Endpoint berada di `/api/v1/employees`:
+
+- `GET /` dan `GET /{employee_id}` untuk direktori/detail;
+- `POST /` dan `PATCH /{employee_id}` untuk pengelolaan pegawai;
+- `POST /import` untuk file CSV;
+- `GET /{employee_id}/cards` untuk daftar kartu;
+- `POST /{employee_id}/cards` dan
+  `PATCH /{employee_id}/cards/{card_id}` untuk registrasi/perubahan kartu.
+
+Semua endpoint memakai JWT. Operasi tulis hanya menerima role `SUPER_ADMIN`
+atau `ADMIN`; role `SUPERVISOR` dan `AUDITOR` hanya dapat membaca melalui API.
+Migration `0010_rfid_access_control` otomatis dijalankan saat container API
+menyala.
+
+## RFID simulator tanpa perangkat fisik
+
+Tahap 3 menyediakan reader virtual untuk menguji alur tap kartu tanpa perangkat
+RFID. Simulator memakai model, repository, transaksi, audit log, dan aturan
+validitas kartu yang sama dengan event reader fisik. Fitur ini dinonaktifkan
+secara default agar tidak dapat dipakai tanpa sengaja pada production.
+
+Aktifkan pada `.env` development:
+
+```dotenv
+ENABLE_RFID_SIMULATOR=true
+RFID_SIMULATOR_READER_CODE=SIM-READER-01
+RFID_SIMULATOR_READER_NAME=Simulator Pintu Utama
+RFID_SIMULATOR_READER_LOCATION=Pintu Utama
+RFID_SIMULATOR_EVENT_TTL_SECONDS=30
+```
+
+Restart API setelah mengubah konfigurasi:
+
+```bash
+docker compose up -d --build api dashboard
+```
+
+Login sebagai `SUPER_ADMIN` atau `ADMIN`, lalu buka
+**Administrasi → Simulator RFID**. Pilih kartu aktif atau masukkan UID manual,
+tentukan arah masuk/keluar, kemudian tekan **Kirim tap virtual**.
+
+Hasil simulasi:
+
+- kartu aktif dan pegawai aktif menghasilkan event `PENDING` untuk menunggu
+  korelasi dengan event kamera;
+- kartu diblokir, hilang, kedaluwarsa, pegawai nonaktif, atau UID tidak dikenal
+  menghasilkan event `REJECTED` beserta alasannya;
+- setiap tap memiliki idempotency key sehingga retry tidak membuat duplikat;
+- payload ditandai `source=rfid_simulator` dan tindakan dicatat pada
+  `audit_logs`;
+- log aplikasi hanya menulis empat karakter terakhir UID.
+
+Endpoint admin-only:
+
+- `GET /api/v1/rfid/simulator/options`;
+- `POST /api/v1/rfid/simulator/tap`;
+- `GET /api/v1/rfid/simulator/events`.
+
+Set kembali `ENABLE_RFID_SIMULATOR=false` sebelum deployment production.
 
 ## Backup harian dan import arsip
 
