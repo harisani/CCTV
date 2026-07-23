@@ -4,6 +4,8 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
-storage/
+.ruff_cache/
+/storage/
 dashboard/node_modules/
 dashboard/dist/
+.DS_Store

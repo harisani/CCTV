@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.12-slim AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -6,8 +6,6 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /service
 
-# Default CPU wheels keep local/Apple-Silicon images compact. GPU deployments can
-# override TORCH_INDEX_URL with the matching official CUDA wheel index.
 ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
 
 RUN apt-get update \
@@ -20,6 +18,7 @@ RUN pip install --no-cache-dir \
     && pip install --no-cache-dir -r requirements.txt \
     && python -c "import torchreid; torchreid.models.build_model(name='osnet_x1_0', num_classes=1000, loss='softmax', pretrained=True)"
 
+COPY pyproject.toml ./
 COPY app ./app
 COPY alembic.ini ./
 COPY alembic ./alembic
@@ -27,6 +26,20 @@ COPY docker/entrypoint.sh /entrypoint.sh
 
 RUN mkdir -p /service/storage \
     && chmod +x /entrypoint.sh
+
+FROM base AS test
+
+ENV POSTGRES_PASSWORD=test-only-postgres-password \
+    JWT_SECRET=test-only-jwt-secret \
+    API_ADMIN_PASSWORD=test-only-admin-password
+
+RUN pip install --no-cache-dir ".[dev]"
+COPY tests ./tests
+COPY examples ./examples
+ENTRYPOINT []
+CMD ["pytest", "-q"]
+
+FROM base AS production
 
 EXPOSE 8000
 ENTRYPOINT ["/entrypoint.sh"]
