@@ -70,6 +70,9 @@ class PresenceReconciliationSchedulerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session.added[0].event_metadata["reason"], "MIDNIGHT_NO_EXIT")
         self.assertEqual(payloads[0]["camera_name"], "Lobby")
         self.assertTrue(payloads[0]["system_generated"])
+        self.assertIsNone(payloads[0]["snapshot_id"])
+        self.assertNotIn("snapshot_path", payloads[0])
+        self.assertNotIn("snapshot_url", payloads[0])
 
 
 if __name__ == "__main__":
