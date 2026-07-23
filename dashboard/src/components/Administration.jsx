@@ -11,8 +11,6 @@ import {
   MenuItem,
   Stack,
   Switch,
-  Tab,
-  Tabs,
   TextField,
 } from '@mui/material'
 import AddIcon from '@mui/icons-material/Add'
@@ -218,8 +216,7 @@ function DeleteCameraDialog({ camera, token, onClose, onDeleted }) {
   </Dialog>
 }
 
-export default function Administration({ token, currentUser, cameras, onReloadCameras }) {
-  const [section, setSection] = useState('cameras')
+export default function Administration({ token, currentUser, cameras, onReloadCameras, section, onSectionChange }) {
   const [users, setUsers] = useState([])
   const [cameraDialog, setCameraDialog] = useState({ open: false, camera: null })
   const [userDialog, setUserDialog] = useState({ open: false, user: null })
@@ -236,7 +233,9 @@ export default function Administration({ token, currentUser, cameras, onReloadCa
     try { setUsers((await api('/users?limit=100', token)).items) } catch (err) { setError(err.message) }
   }
   useEffect(() => { loadUsers() }, [token, canManageUsers])
-  useEffect(() => { if (!canManageUsers && section === 'users') setSection('cameras') }, [canManageUsers, section])
+  useEffect(() => {
+    if (!canManageUsers && ['users', 'backups'].includes(section)) onSectionChange('cameras')
+  }, [canManageUsers, section, onSectionChange])
 
   const activeCameras = useMemo(() => cameras.filter(camera => camera.enabled).length, [cameras])
   return <main className="dashboard-main admin-main">
@@ -246,15 +245,6 @@ export default function Administration({ token, currentUser, cameras, onReloadCa
     </section>
     {error && <Alert className="error-banner" severity="error" onClose={() => setError('')}>{error}</Alert>}
     {notice && <Alert className="error-banner" severity="success" onClose={() => setNotice('')}>{notice}</Alert>}
-    <Tabs className="admin-tabs" value={section} onChange={(_, value) => setSection(value)} variant="scrollable" scrollButtons="auto">
-      <Tab value="cameras" label="Kamera" />
-      {canManageEmployees && <Tab value="employees" label="Pegawai & RFID" />}
-      {canManageEmployees && <Tab value="rfid-simulator" label="Simulator RFID" />}
-      {canManageUsers && <Tab value="users" label="Pengguna & role" />}
-      {canManageIdentities && <Tab value="identities" label="Identitas ReID" />}
-      {canManageUsers && <Tab value="backups" label="Backup & arsip" />}
-    </Tabs>
-
     {section === 'cameras' && <section className="admin-section">
       <div className="section-heading"><div><h2 className="section-title">Camera Management</h2><p className="section-copy">Tambah, uji, aktifkan, dan kelompokkan kamera.</p></div><Button variant="contained" startIcon={<AddIcon />} onClick={() => setCameraDialog({ open: true, camera: null })}>Tambah kamera</Button></div>
       <div className="ledger-table-wrap"><table className="ledger-table admin-table"><thead><tr><th>Kamera</th><th>Lokasi</th><th>Status</th><th>Aktif</th><th>Aksi</th></tr></thead><tbody>

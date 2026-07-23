@@ -13,13 +13,12 @@ import {
   TextField,
 } from '@mui/material'
 import CloseIcon from '@mui/icons-material/Close'
-import LogoutIcon from '@mui/icons-material/Logout'
+import MenuIcon from '@mui/icons-material/Menu'
 import SearchIcon from '@mui/icons-material/Search'
-import DashboardOutlinedIcon from '@mui/icons-material/DashboardOutlined'
-import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined'
 import CameraSidebar from './components/CameraSidebar'
 import LiveGrid from './components/LiveGrid'
 import Administration from './components/Administration'
+import AppNavigation from './components/AppNavigation'
 import { API_BASE, api, login } from './api'
 import { useDashboardSocket } from './useDashboardSocket'
 
@@ -328,6 +327,8 @@ function App() {
   const [commandIndex, setCommandIndex] = useState(0)
   const [currentUser, setCurrentUser] = useState(null)
   const [page, setPage] = useState('monitoring')
+  const [adminSection, setAdminSection] = useState('cameras')
+  const [navigationOpen, setNavigationOpen] = useState(false)
   const initializedSelection = useRef(false)
 
   const loadCameras = useCallback(async () => {
@@ -459,6 +460,8 @@ function App() {
     setSelectedIds([])
     setCurrentUser(null)
     setPage('monitoring')
+    setAdminSection('cameras')
+    setNavigationOpen(false)
   }
 
   const canAdminister = ['SUPER_ADMIN', 'ADMIN'].includes(currentUser?.role)
@@ -518,33 +521,33 @@ function App() {
   if (!token) return <Login onLogin={value => { localStorage.setItem('cctv-token', value); setToken(value) }} />
 
   return <div className="app-shell">
-    <header className="control-nav">
-      <div className="control-nav__inner">
-        <div className="brand-lockup">
-          <span className="brand-mark" aria-hidden="true">PF</span>
-          <div className="brand-copy"><strong>People Flow Control</strong><span>Realtime operations</span></div>
-        </div>
+    <AppNavigation
+      open={navigationOpen}
+      page={page}
+      adminSection={adminSection}
+      canAdminister={canAdminister}
+      currentUser={currentUser}
+      socketStatus={socketStatus}
+      onClose={() => setNavigationOpen(false)}
+      onPageChange={setPage}
+      onAdminSectionChange={setAdminSection}
+      onLogout={logout}
+    />
+
+    <div className="app-workspace">
+      <header className="workspace-toolbar">
+        <IconButton className="icon-action workspace-toolbar__menu" onClick={() => setNavigationOpen(true)} aria-label="Buka navigasi">
+          <MenuIcon />
+        </IconButton>
         <button className="search-trigger" type="button" onClick={() => setCommandOpen(true)} aria-label="Buka pencarian cepat">
           <SearchIcon fontSize="small" aria-hidden="true" />
           <span className="search-trigger__label">Cari kamera, orang, atau event</span>
           <kbd>⌘ K</kbd>
         </button>
-        <div className="control-nav__actions">
-          {canAdminister && <div className="view-switch" aria-label="Navigasi utama">
-            <button type="button" data-active={page === 'monitoring'} onClick={() => setPage('monitoring')} aria-label="Buka monitoring"><DashboardOutlinedIcon fontSize="small" /><span>Monitoring</span></button>
-            <button type="button" data-active={page === 'administration'} onClick={() => setPage('administration')} aria-label="Buka administrasi"><SettingsOutlinedIcon fontSize="small" /><span>Administrasi</span></button>
-          </div>}
-          <span className="connection-pill">
-            <span className="status-dot" data-status={socketStatus} />
-            {socketStatus === 'connected' ? 'Realtime aktif' : socketStatus}
-          </span>
-          <IconButton className="icon-action" onClick={logout} aria-label="Keluar dari dashboard"><LogoutIcon /></IconButton>
-        </div>
-      </div>
-    </header>
+      </header>
 
     {page === 'administration' && canAdminister
-      ? <Administration token={token} currentUser={currentUser} cameras={camerasWithStatus} onReloadCameras={loadCameras} />
+      ? <Administration token={token} currentUser={currentUser} cameras={camerasWithStatus} onReloadCameras={loadCameras} section={adminSection} onSectionChange={setAdminSection} />
       : <main className="dashboard-main">
       {error && <Alert className="error-banner" severity="error" onClose={() => setError('')}>{error}</Alert>}
 
@@ -610,6 +613,7 @@ function App() {
         <span className="tnum">{onlineCount}/{cameras.length} kamera online · {socketStatus}</span>
       </footer>
       </main>}
+    </div>
 
     <CommandPalette
       open={commandOpen}
