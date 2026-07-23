@@ -26,6 +26,14 @@ Saat database masih kosong, API membuat akun awal dari `API_ADMIN_USERNAME` dan
 digunakan untuk bootstrap pertama; perubahan berikutnya disimpan sebagai hash
 scrypt di PostgreSQL, bukan kembali ke `.env`.
 
+## Security baseline
+
+- Never expose the API or dashboard directly to the internet without TLS and an approved reverse proxy.
+- Production startup rejects placeholder database, JWT, administrator, and evidence-signing secrets.
+- Keep `.env` outside Git with file permission `0600`; production secrets belong in the deployment secret manager.
+- Snapshot evidence is not public static content. The dashboard requests a short-lived signed URL, and every grant/view is audited.
+- Do not delete `storage/`, PostgreSQL volumes, or historical Alembic migrations during source cleanup.
+
 ## User Management dan RBAC
 
 Menu **Administrasi** tersedia setelah login. Pembagian akses saat ini:
