@@ -2,7 +2,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, PostgresDsn, computed_field
+from pydantic import Field, PostgresDsn, computed_field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -75,6 +75,11 @@ class Settings(BaseSettings):
     jwt_secret: str = Field(repr=False)
     jwt_algorithm: str = "HS256"
     jwt_access_token_expire_minutes: int = Field(default=60, gt=0)
+    evidence_signing_secret: str = Field(
+        default="development-only-evidence-key-change-this-before-production",
+        repr=False,
+    )
+    evidence_access_token_expire_seconds: int = Field(default=60, ge=10, le=300)
     api_admin_username: str = "admin"
     api_admin_password: str = Field(repr=False)
     login_max_failed_attempts: int = Field(default=5, gt=0)
@@ -131,6 +136,48 @@ class Settings(BaseSettings):
     reid_min_crop_height: int = Field(default=64, gt=0)
     torch_num_threads: int = Field(default=0, ge=0)
     opencv_num_threads: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def validate_security_configuration(self) -> "Settings":
+        if self.app_env.strip().lower() != "production":
+            return self
+
+        errors: list[str] = []
+        weak_markers = ("replace", "change-this", "cctv_user", "changeme", "example")
+
+        def weak(value: str, *, minimum: int) -> bool:
+            normalized = value.strip().lower()
+            return len(value.strip()) < minimum or any(
+                marker in normalized for marker in weak_markers
+            )
+
+        if self.debug:
+            errors.append("DEBUG must be false in production")
+        if self.jwt_algorithm != "HS256":
+            errors.append("JWT_ALGORITHM must be HS256")
+        if weak(self.jwt_secret, minimum=32):
+            errors.append("JWT_SECRET must be a non-placeholder value of at least 32 characters")
+        if weak(self.evidence_signing_secret, minimum=32):
+            errors.append(
+                "EVIDENCE_SIGNING_SECRET must be a non-placeholder value of at least 32 characters"
+            )
+        if weak(self.postgres_password, minimum=16):
+            errors.append(
+                "POSTGRES_PASSWORD must be a non-placeholder value of at least 16 characters"
+            )
+        if weak(self.api_admin_password, minimum=16):
+            errors.append(
+                "API_ADMIN_PASSWORD must be a non-placeholder value of at least 16 characters"
+            )
+        if "*" in self.cors_origins:
+            errors.append("CORS_ALLOWED_ORIGINS must not contain * in production")
+        if self.enable_dr_scheduler and len(self.dr_encryption_passphrase) < 16:
+            errors.append(
+                "DR_ENCRYPTION_PASSPHRASE must contain at least 16 characters when DR is enabled"
+            )
+        if errors:
+            raise ValueError("; ".join(errors))
+        return self
 
     @property
     def cors_origins(self) -> list[str]:
