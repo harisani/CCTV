@@ -31,6 +31,7 @@ async def dashboard_websocket(websocket: WebSocket) -> None:
                     raise jwt.InvalidTokenError("Invalid user session")
                 user_id = str(user.id)
         except (jwt.PyJWTError, ValueError):
+            logger.warning("Dashboard WebSocket authentication rejected")
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid token")
             return
 
@@ -57,6 +58,14 @@ async def dashboard_websocket(websocket: WebSocket) -> None:
                     await websocket.send_json({"type": "error", "detail": str(error)})
         except WebSocketDisconnect:
             pass
+        except Exception as error:
+            logger.error(
+                "Dashboard WebSocket communication failed",
+                extra={
+                    "user_id": user_id,
+                    "exception_type": type(error).__name__,
+                },
+            )
         finally:
             dashboard_hub.disconnect(websocket)
             logger.info("Dashboard WebSocket disconnected", extra={"user_id": user_id})

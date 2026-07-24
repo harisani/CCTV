@@ -13,8 +13,24 @@ from typing import Callable
 @dataclass(slots=True)
 class _Attempt:
     failures: int
+    pending: int
     first_failure_at: float
     blocked_until: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class LoginAdmission:
+    """One reserved authentication attempt.
+
+    ``retry_after`` is set only when authentication must not run. An allowed
+    admission can still be the boundary attempt; if that attempt fails, its
+    response becomes HTTP 429 while earlier admitted attempts retain HTTP 401.
+    """
+
+    key: str
+    allowed: bool
+    boundary: bool
+    retry_after: int | None = None
 
 
 class LoginRateLimiter:
@@ -54,14 +70,110 @@ class LoginRateLimiter:
                 return None
             return self._remaining_seconds(attempt, now)
 
+    def admit(self, key: str) -> LoginAdmission:
+        """Atomically reserve one password evaluation for ``key``."""
+        with self._lock:
+            now = self.clock()
+            self._prune(now)
+            attempt = self._attempts.get(key)
+            if attempt is not None and attempt.blocked_until is not None:
+                return LoginAdmission(
+                    key=key,
+                    allowed=False,
+                    boundary=False,
+                    retry_after=self._remaining_seconds(attempt, now),
+                )
+            if attempt is None:
+                if not self._make_room():
+                    return LoginAdmission(
+                        key=key,
+                        allowed=False,
+                        boundary=False,
+                        retry_after=self.window_seconds,
+                    )
+                attempt = _Attempt(
+                    failures=0,
+                    pending=0,
+                    first_failure_at=now,
+                )
+                self._attempts[key] = attempt
+
+            if attempt.failures + attempt.pending >= self.max_attempts:
+                attempt.blocked_until = now + self.window_seconds
+                return LoginAdmission(
+                    key=key,
+                    allowed=False,
+                    boundary=False,
+                    retry_after=self.window_seconds,
+                )
+
+            attempt.pending += 1
+            boundary = attempt.failures + attempt.pending >= self.max_attempts
+            if boundary:
+                # Block later requests while this final admitted password check
+                # is still running. It is cleared if that admission is released
+                # for a non-credential result.
+                attempt.blocked_until = now + self.window_seconds
+            return LoginAdmission(
+                key=key,
+                allowed=True,
+                boundary=boundary,
+            )
+
+    def complete_failure(self, admission: LoginAdmission) -> int | None:
+        """Convert a reserved evaluation into a failed credential attempt."""
+        if not admission.allowed:
+            raise ValueError("Cannot complete a denied login admission")
+        with self._lock:
+            now = self.clock()
+            attempt = self._attempts.get(admission.key)
+            if attempt is None:
+                if not self._make_room():
+                    return self.window_seconds if admission.boundary else None
+                attempt = _Attempt(
+                    failures=0,
+                    pending=0,
+                    first_failure_at=now,
+                )
+                self._attempts[admission.key] = attempt
+            elif attempt.pending > 0:
+                attempt.pending -= 1
+            attempt.failures += 1
+            if attempt.failures + attempt.pending >= self.max_attempts:
+                attempt.blocked_until = attempt.blocked_until or (
+                    now + self.window_seconds
+                )
+            if admission.boundary:
+                attempt.blocked_until = attempt.blocked_until or (
+                    now + self.window_seconds
+                )
+                return self._remaining_seconds(attempt, now)
+            return None
+
+    def release(self, admission: LoginAdmission) -> None:
+        """Release an admission that did not produce an invalid-password result."""
+        if not admission.allowed:
+            return
+        with self._lock:
+            attempt = self._attempts.get(admission.key)
+            if attempt is None:
+                return
+            if attempt.pending > 0:
+                attempt.pending -= 1
+            if attempt.failures + attempt.pending < self.max_attempts:
+                attempt.blocked_until = None
+            if attempt.failures == 0 and attempt.pending == 0:
+                self._attempts.pop(admission.key, None)
+
     def record_failure(self, key: str) -> int | None:
         with self._lock:
             now = self.clock()
             self._prune(now)
             attempt = self._attempts.get(key)
             if attempt is None:
-                self._make_room()
-                attempt = _Attempt(failures=0, first_failure_at=now)
+                if not self._make_room():
+                    return self.window_seconds
+                attempt = _Attempt(failures=0, pending=0, first_failure_at=now)
                 self._attempts[key] = attempt
             elif attempt.blocked_until is not None:
                 return self._remaining_seconds(attempt, now)
@@ -83,23 +195,31 @@ class LoginRateLimiter:
             if (
                 attempt.blocked_until is not None
                 and attempt.blocked_until <= now
+                and attempt.pending == 0
             )
             or (
                 attempt.blocked_until is None
+                and attempt.pending == 0
                 and now - attempt.first_failure_at >= self.window_seconds
             )
         ]
         for key in expired:
             self._attempts.pop(key, None)
 
-    def _make_room(self) -> None:
+    def _make_room(self) -> bool:
         if len(self._attempts) < self.max_entries:
-            return
+            return True
+        candidates = [
+            key for key, attempt in self._attempts.items() if attempt.pending == 0
+        ]
+        if not candidates:
+            return False
         oldest = min(
-            self._attempts,
+            candidates,
             key=lambda key: self._attempts[key].first_failure_at,
         )
         self._attempts.pop(oldest, None)
+        return True
 
     @staticmethod
     def _remaining_seconds(attempt: _Attempt, now: float) -> int:

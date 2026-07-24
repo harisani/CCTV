@@ -78,6 +78,23 @@ def test_capacity_remains_bounded_under_concurrent_new_keys() -> None:
     assert len(limiter._attempts) == 10
 
 
+def test_capacity_does_not_evict_in_flight_password_evaluations() -> None:
+    limiter = LoginRateLimiter(2, 60, 2)
+    first_key = limiter.build_key("first", "10.0.0.1")
+    second_key = limiter.build_key("second", "10.0.0.1")
+    overflow_key = limiter.build_key("overflow", "10.0.0.1")
+    first = limiter.admit(first_key)
+    second = limiter.admit(second_key)
+
+    denied = limiter.admit(overflow_key)
+
+    assert first.allowed is True
+    assert second.allowed is True
+    assert denied.allowed is False
+    assert denied.retry_after == 60
+    assert set(limiter._attempts) == {first_key, second_key}
+
+
 def test_concurrent_boundary_failures_do_not_extend_block() -> None:
     now = [100.0]
     limiter = LoginRateLimiter(2, 30, 10, clock=lambda: now[0])

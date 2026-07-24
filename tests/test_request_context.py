@@ -106,6 +106,7 @@ def test_application_allows_client_correlation_header(monkeypatch) -> None:
 
     assert preflight.status_code == 200
     assert "x-correlation-id" in preflight.headers["access-control-allow-headers"].lower()
+    assert preflight.headers["X-Correlation-ID"]
 
     response = client.get(
         "/cors-probe",

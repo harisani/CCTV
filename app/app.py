@@ -73,6 +73,8 @@ async def lifespan(application: FastAPI):
         yield
     finally:
         application.state.ready = False
+        if camera_runtime is not None:
+            await camera_runtime.stop()
         if presence_reconciliation is not None:
             await presence_reconciliation.stop()
         if backup_scheduler is not None:
@@ -81,8 +83,6 @@ async def lifespan(application: FastAPI):
             await dr_scheduler.stop()
         if reid_retention is not None:
             await reid_retention.stop()
-        if camera_runtime is not None:
-            await camera_runtime.stop()
         await engine.dispose()
 
 
@@ -93,16 +93,18 @@ def create_app() -> FastAPI:
     application = FastAPI(title=settings.app_name, debug=settings.debug, lifespan=lifespan)
     application.state.ready = False
     application.add_middleware(
-        RequestContextMiddleware,
-        max_length=settings.correlation_id_max_length,
-    )
-    application.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
         allow_headers=["Authorization", "Content-Type", "X-Correlation-ID"],
         expose_headers=["X-Correlation-ID"],
+    )
+    # Starlette wraps middleware in reverse registration order. Request context
+    # must be outermost so CORS short-circuit responses are also correlated.
+    application.add_middleware(
+        RequestContextMiddleware,
+        max_length=settings.correlation_id_max_length,
     )
     register_exception_handlers(application)
     application.include_router(api_router, prefix="/api/v1")

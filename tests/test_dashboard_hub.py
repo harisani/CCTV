@@ -1,12 +1,15 @@
 import asyncio
 import logging
 import unittest
+from types import SimpleNamespace
 from uuid import UUID
+from uuid import uuid4
 
 import pytest
 from fastapi import status
 
 import app.api.routes.dashboard_ws as dashboard_ws_module
+from app.api.request_context import get_correlation_id
 from app.dashboard.realtime import DashboardHub
 
 
@@ -30,6 +33,37 @@ class FakeWebSocket:
 class DisconnectedWebSocket(FakeWebSocket):
     async def accept(self) -> None:
         raise RuntimeError("client disconnected")
+
+
+class FailingReceiveWebSocket(FakeWebSocket):
+    async def receive_json(self) -> dict[str, object]:
+        raise RuntimeError("synthetic receive failure")
+
+
+class FakeSession:
+    def __init__(self, user: object) -> None:
+        self.user = user
+
+    async def __aenter__(self) -> "FakeSession":
+        return self
+
+    async def __aexit__(self, *_args: object) -> None:
+        return None
+
+    async def get(self, _model: object, _identifier: object) -> object:
+        return self.user
+
+
+class FakeRouteHub:
+    def __init__(self) -> None:
+        self.disconnected = False
+
+    async def connect(self, websocket: object) -> bool:
+        await websocket.accept()
+        return True
+
+    def disconnect(self, _websocket: object) -> None:
+        self.disconnected = True
 
 
 class DashboardHubTest(unittest.IsolatedAsyncioTestCase):
@@ -104,6 +138,45 @@ def test_dashboard_websocket_binds_context_without_logging_token(
     assert reset == [marker]
     assert websocket.close_code == status.WS_1008_POLICY_VIOLATION
     assert "secret-websocket-token" not in caplog.text
+
+
+def test_dashboard_websocket_logs_unexpected_failure_inside_connection_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_id = uuid4()
+    user = SimpleNamespace(id=user_id, is_active=True, token_version=3)
+    hub = FakeRouteHub()
+    logged_correlations: list[str | None] = []
+    websocket = FailingReceiveWebSocket(query_params={"token": "opaque-token"})
+
+    monkeypatch.setattr(
+        dashboard_ws_module,
+        "get_settings",
+        lambda: SimpleNamespace(jwt_secret="secret", jwt_algorithm="HS256"),
+    )
+    monkeypatch.setattr(
+        dashboard_ws_module.jwt,
+        "decode",
+        lambda *_args, **_kwargs: {"sub": str(user_id), "ver": 3},
+    )
+    monkeypatch.setattr(
+        dashboard_ws_module,
+        "SessionLocal",
+        lambda: FakeSession(user),
+    )
+    monkeypatch.setattr(dashboard_ws_module, "dashboard_hub", hub)
+    monkeypatch.setattr(
+        dashboard_ws_module.logger,
+        "error",
+        lambda *_args, **_kwargs: logged_correlations.append(get_correlation_id()),
+    )
+
+    asyncio.run(dashboard_ws_module.dashboard_websocket(websocket))
+
+    assert len(logged_correlations) == 1
+    UUID(str(logged_correlations[0]))
+    assert get_correlation_id() is None
+    assert hub.disconnected is True
 
 
 if __name__ == "__main__":

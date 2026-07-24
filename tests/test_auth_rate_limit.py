@@ -1,3 +1,6 @@
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event, Lock
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -111,3 +114,73 @@ def test_persistent_account_lock_status_is_unchanged(
     assert response.status_code == 423
     assert response.json()["detail"] == "Account is temporarily locked"
     assert limiter.retry_after(limiter.build_key("admin", "testclient")) is None
+
+
+def test_concurrent_logins_reserve_attempts_before_authentication(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = FastAPI()
+    app.include_router(router, prefix="/api/v1")
+    settings = SimpleNamespace(
+        jwt_access_token_expire_minutes=60,
+        jwt_secret="test-secret-that-is-at-least-32-bytes-long",
+        jwt_algorithm="HS256",
+    )
+    limiter = LoginRateLimiter(max_attempts=2, window_seconds=60, max_entries=100)
+    authentication_started = Event()
+    release_authentication = Event()
+    calls_lock = Lock()
+    authentication_calls = 0
+
+    async def coordinated_authenticate(
+        _self: UserService,
+        _username: str,
+        _password: str,
+        _settings: object,
+    ) -> object:
+        nonlocal authentication_calls
+        with calls_lock:
+            authentication_calls += 1
+            if authentication_calls == 2:
+                authentication_started.set()
+        await asyncio.to_thread(release_authentication.wait, 5)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+        )
+
+    monkeypatch.setattr(UserService, "authenticate", coordinated_authenticate)
+    app.dependency_overrides[get_app_settings] = lambda: settings
+    app.dependency_overrides[get_user_repository] = lambda: SimpleNamespace(session=object())
+    app.dependency_overrides[get_login_rate_limiter] = lambda: limiter
+
+    with TestClient(app) as client, ThreadPoolExecutor(max_workers=8) as executor:
+        first_attempts = [
+            executor.submit(
+                client.post,
+                "/api/v1/auth/token",
+                data={"username": "admin", "password": "invalid-password"},
+            )
+            for _ in range(2)
+        ]
+        assert authentication_started.wait(timeout=5)
+
+        later_attempts = [
+            executor.submit(
+                client.post,
+                "/api/v1/auth/token",
+                data={
+                    "username": "admin",
+                    "password": "valid-password" if index == 0 else "invalid-password",
+                },
+            )
+            for index in range(6)
+        ]
+        later_responses = [future.result(timeout=5) for future in later_attempts]
+        release_authentication.set()
+        first_responses = [future.result(timeout=5) for future in first_attempts]
+
+    assert authentication_calls == 2
+    assert [response.status_code for response in later_responses] == [429] * 6
+    assert all(response.headers["Retry-After"] == "60" for response in later_responses)
+    assert sorted(response.status_code for response in first_responses) == [401, 429]

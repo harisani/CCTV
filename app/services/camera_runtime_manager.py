@@ -82,30 +82,109 @@ class CameraRuntimeManager:
         self._logger.info("Camera runtime manager started")
 
     async def stop(self) -> None:
+        """Stop every camera within one process-wide deadline.
+
+        The deadline is shared by the manager loop, connection workers, AI
+        pipelines, camera disconnects, and final dashboard cleanup. It therefore
+        stays constant when the number of cameras grows.
+        """
         self._stop_event.set()
+        deadline = (
+            asyncio.get_running_loop().time()
+            + self._settings.camera_shutdown_timeout_seconds
+        )
         task = self._task
         if task is not None:
-            await task
+            task.cancel()
+            await self._wait_for_shutdown_tasks(
+                "runtime loop",
+                [task],
+                deadline,
+            )
         self._task = None
-        connect_tasks = [runtime.connect_task for runtime in self._runtimes.values() if runtime.connect_task]
+        runtimes = tuple(self._runtimes.values())
+        connect_tasks = [
+            runtime.connect_task for runtime in runtimes if runtime.connect_task
+        ]
         for connect_task in connect_tasks:
             connect_task.cancel()
-        await asyncio.gather(
-            *(
-                runtime.pipeline.stop()
-                for runtime in self._runtimes.values()
-                if runtime.pipeline is not None
+        await self._wait_for_shutdown_tasks(
+            "camera connections",
+            connect_tasks,
+            deadline,
+        )
+        pipeline_tasks = [
+            asyncio.create_task(
+                runtime.pipeline.stop(),
+                name=f"stop-pipeline-{runtime.camera_id}",
+            )
+            for runtime in runtimes
+            if runtime.pipeline is not None
+        ]
+        await self._wait_for_shutdown_tasks(
+            "AI pipelines",
+            pipeline_tasks,
+            deadline,
+        )
+        disconnect_tasks = [
+            asyncio.create_task(
+                asyncio.to_thread(runtime.service.disconnect),
+                name=f"disconnect-camera-{runtime.camera_id}",
+            )
+            for runtime in runtimes
+        ]
+        await self._wait_for_shutdown_tasks(
+            "camera disconnects",
+            disconnect_tasks,
+            deadline,
+        )
+        final_tasks = [
+            asyncio.create_task(
+                self._live_visibility.clear(),
+                name="clear-live-visibility",
             ),
-            return_exceptions=True,
+            asyncio.create_task(
+                self._dashboard_hub.publish_occupancy({"total": 0}),
+                name="publish-zero-occupancy",
+            ),
+        ]
+        await self._wait_for_shutdown_tasks(
+            "dashboard cleanup",
+            final_tasks,
+            deadline,
         )
-        await asyncio.gather(
-            *(asyncio.to_thread(runtime.service.disconnect) for runtime in self._runtimes.values()),
-            return_exceptions=True,
-        )
-        await self._live_visibility.clear()
-        await self._dashboard_hub.publish_occupancy({"total": 0})
         self._runtimes.clear()
         self._logger.info("Camera runtime manager stopped")
+
+    async def _wait_for_shutdown_tasks(
+        self,
+        phase: str,
+        tasks: list[asyncio.Task[Any]],
+        deadline: float,
+    ) -> None:
+        """Contain cleanup failures without extending the global deadline."""
+        if not tasks:
+            return
+        remaining = max(0.0, deadline - asyncio.get_running_loop().time())
+        done, pending = await asyncio.wait(tasks, timeout=remaining)
+        for finished in done:
+            if finished.cancelled():
+                continue
+            error = finished.exception()
+            if error is not None:
+                self._logger.error(
+                    "Camera shutdown cleanup failed phase=%s error_type=%s",
+                    phase,
+                    type(error).__name__,
+                )
+        if pending:
+            for unfinished in pending:
+                unfinished.cancel()
+            self._logger.warning(
+                "Camera shutdown deadline reached phase=%s pending=%s",
+                phase,
+                len(pending),
+            )
 
     async def _run(self) -> None:
         next_sync_at = 0.0

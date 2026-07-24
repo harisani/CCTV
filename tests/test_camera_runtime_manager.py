@@ -132,6 +132,16 @@ class FakePipeline:
         return {"confirmed": 0, "uncertain": 1, "total": 0}
 
 
+class HangingStopPipeline(FakePipeline):
+    def __init__(self) -> None:
+        super().__init__()
+        self.stop_started = asyncio.Event()
+
+    async def stop(self) -> None:
+        self.stop_started.set()
+        await asyncio.Event().wait()
+
+
 class TestSettings:
     camera_sync_interval_seconds = 0.02
     camera_reconnect_delay_seconds = 0.01
@@ -144,9 +154,41 @@ class TestSettings:
     camera_frame_height = 480
     camera_open_timeout_milliseconds = 1500
     camera_read_timeout_milliseconds = 2500
+    camera_shutdown_timeout_seconds = 0.5
 
 
 class CameraRuntimeManagerTest(unittest.IsolatedAsyncioTestCase):
+    async def test_shutdown_deadline_contains_stuck_pipeline_cleanup(self) -> None:
+        camera = SimpleNamespace(
+            id=uuid4(),
+            name="Stuck AI",
+            rtsp_url="rtsp://example/stuck",
+            crossing_config=None,
+        )
+        settings = TestSettings()
+        settings.camera_shutdown_timeout_seconds = 0.05
+        pipeline = HangingStopPipeline()
+        manager = CameraRuntimeManager(
+            settings,
+            FakeCatalog(camera),
+            FakeHub(),
+            camera_factory=lambda _camera_id, _url: FakeCameraService(),
+            jpeg_encoder=lambda _frame, _quality: b"jpeg",
+            pipeline_factory=lambda _camera_id: pipeline,
+        )
+        await manager.start()
+        for _ in range(20):
+            if pipeline.started:
+                break
+            await asyncio.sleep(0.01)
+        self.assertTrue(pipeline.started)
+
+        started_at = time.monotonic()
+        await manager.stop()
+
+        self.assertTrue(pipeline.stop_started.is_set())
+        self.assertLess(time.monotonic() - started_at, 0.2)
+
     async def test_disconnects_multiple_cameras_concurrently_during_shutdown(self) -> None:
         cameras = [
             SimpleNamespace(id=uuid4(), name=f"Camera {index}", rtsp_url=f"rtsp://camera/{index}")

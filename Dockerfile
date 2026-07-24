@@ -2,6 +2,10 @@ FROM python:3.12-slim AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    HOME=/service \
+    TORCH_HOME=/service/.cache/torch \
+    XDG_CACHE_HOME=/service/.cache \
+    MPLCONFIGDIR=/tmp/matplotlib \
     YOLO_CONFIG_DIR=/tmp
 
 WORKDIR /service
@@ -17,10 +21,12 @@ RUN groupadd --system --gid 10001 cctv \
         --home-dir /service --shell /usr/sbin/nologin cctv
 
 COPY requirements.txt ./
-RUN pip install --no-cache-dir \
+RUN mkdir -p /service/.cache/torch /service/storage \
+    && pip install --no-cache-dir \
         torch==2.5.1 torchvision==0.20.1 --index-url "${TORCH_INDEX_URL}" \
     && pip install --no-cache-dir -r requirements.txt \
-    && python -c "import torchreid; torchreid.models.build_model(name='osnet_x1_0', num_classes=1000, loss='softmax', pretrained=True)"
+    && python -c "import torchreid; torchreid.models.build_model(name='osnet_x1_0', num_classes=1000, loss='softmax', pretrained=True)" \
+    && python -c "from ultralytics import YOLO; YOLO('yolo11n.pt')"
 
 COPY pyproject.toml ./
 COPY app ./app
@@ -28,8 +34,8 @@ COPY alembic.ini ./
 COPY alembic ./alembic
 COPY docker/entrypoint.sh /entrypoint.sh
 
-RUN mkdir -p /service/storage \
-    && chown -R cctv:cctv /service/storage \
+RUN mkdir -p /tmp/matplotlib \
+    && chown -R cctv:cctv /service/.cache /service/storage /tmp/matplotlib \
     && chmod +x /entrypoint.sh
 
 FROM base AS test

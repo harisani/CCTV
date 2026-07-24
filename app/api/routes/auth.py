@@ -27,13 +27,14 @@ async def login_for_access_token(
 ) -> TokenResponse:
     client_host = request.client.host if request.client else "unknown"
     key = limiter.build_key(form.username, client_host)
-    retry_after = limiter.retry_after(key)
-    if retry_after is not None:
+    admission = limiter.admit(key)
+    if not admission.allowed:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Too many login attempts",
-            headers={"Retry-After": str(retry_after)},
+            headers={"Retry-After": str(admission.retry_after)},
         )
+    admission_open = True
     try:
         user = await UserService(repository).authenticate(
             form.username,
@@ -42,7 +43,8 @@ async def login_for_access_token(
         )
     except HTTPException as error:
         if error.status_code == status.HTTP_401_UNAUTHORIZED:
-            retry_after = limiter.record_failure(key)
+            retry_after = limiter.complete_failure(admission)
+            admission_open = False
             if retry_after is not None:
                 raise HTTPException(
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -50,7 +52,10 @@ async def login_for_access_token(
                     headers={"Retry-After": str(retry_after)},
                 ) from error
         raise
-    limiter.reset(key)
+    finally:
+        if admission_open:
+            limiter.release(admission)
+    limiter.reset(admission.key)
     return TokenResponse(access_token=create_access_token(settings, user))
 
 
