@@ -125,6 +125,8 @@ class Settings(BaseSettings):
     camera_frame_width: int = Field(default=1280, gt=0)
     camera_frame_height: int = Field(default=720, gt=0)
     camera_reconnect_delay_seconds: float = Field(default=3.0, gt=0)
+    camera_open_timeout_milliseconds: int = Field(default=5_000, ge=100, le=30_000)
+    camera_read_timeout_milliseconds: int = Field(default=5_000, ge=100, le=30_000)
     camera_stale_timeout_seconds: float = Field(default=5.0, gt=0)
     camera_sync_interval_seconds: float = Field(default=5.0, gt=0)
     dashboard_stream_fps: float = Field(default=2.0, gt=0, le=10)

@@ -342,6 +342,8 @@ class CameraRuntimeManager:
             width=self._settings.camera_frame_width,
             height=self._settings.camera_frame_height,
             reconnect_delay_seconds=self._settings.camera_reconnect_delay_seconds,
+            open_timeout_milliseconds=self._settings.camera_open_timeout_milliseconds,
+            read_timeout_milliseconds=self._settings.camera_read_timeout_milliseconds,
         )
 
     @staticmethod

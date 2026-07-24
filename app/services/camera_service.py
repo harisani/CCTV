@@ -24,11 +24,38 @@ class VideoCaptureProtocol(Protocol):
 CaptureFactory = Callable[[str], VideoCaptureProtocol]
 
 
-def _opencv_capture_factory(rtsp_url: str) -> VideoCaptureProtocol:
-    """Create OpenCV's FFmpeg-backed capture only when the camera is used."""
-    import cv2
+class OpenCvCaptureFactory:
+    """Create FFmpeg captures whose blocking open/read calls have hard deadlines."""
 
-    return cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
+    def __init__(
+        self,
+        *,
+        open_timeout_milliseconds: int,
+        read_timeout_milliseconds: int,
+        cv2_module: Any | None = None,
+    ) -> None:
+        self._open_timeout_milliseconds = open_timeout_milliseconds
+        self._read_timeout_milliseconds = read_timeout_milliseconds
+        self._cv2 = cv2_module
+
+    def __call__(self, rtsp_url: str) -> VideoCaptureProtocol:
+        cv2 = self._cv2 or self._import_cv2()
+        return cv2.VideoCapture(
+            rtsp_url,
+            cv2.CAP_FFMPEG,
+            [
+                cv2.CAP_PROP_OPEN_TIMEOUT_MSEC,
+                self._open_timeout_milliseconds,
+                cv2.CAP_PROP_READ_TIMEOUT_MSEC,
+                self._read_timeout_milliseconds,
+            ],
+        )
+
+    @staticmethod
+    def _import_cv2() -> Any:
+        import cv2
+
+        return cv2
 
 
 class CameraService:
@@ -53,6 +80,8 @@ class CameraService:
         width: int = 1280,
         height: int = 720,
         reconnect_delay_seconds: float = 3.0,
+        open_timeout_milliseconds: int = 5_000,
+        read_timeout_milliseconds: int = 5_000,
         capture_factory: CaptureFactory | None = None,
     ) -> None:
         if not camera_id.strip():
@@ -65,6 +94,10 @@ class CameraService:
             raise ValueError("width and height must be greater than zero")
         if reconnect_delay_seconds <= 0:
             raise ValueError("reconnect_delay_seconds must be greater than zero")
+        if open_timeout_milliseconds <= 0:
+            raise ValueError("open_timeout_milliseconds must be greater than zero")
+        if read_timeout_milliseconds <= 0:
+            raise ValueError("read_timeout_milliseconds must be greater than zero")
 
         self.camera_id = camera_id
         self.rtsp_url = rtsp_url
@@ -72,7 +105,12 @@ class CameraService:
         self.width = width
         self.height = height
         self.reconnect_delay_seconds = reconnect_delay_seconds
-        self._capture_factory = capture_factory or _opencv_capture_factory
+        self.open_timeout_milliseconds = open_timeout_milliseconds
+        self.read_timeout_milliseconds = read_timeout_milliseconds
+        self._capture_factory = capture_factory or OpenCvCaptureFactory(
+            open_timeout_milliseconds=open_timeout_milliseconds,
+            read_timeout_milliseconds=read_timeout_milliseconds,
+        )
         self._logger = logging.getLogger(f"{__name__}.{camera_id}")
 
         self._capture: VideoCaptureProtocol | None = None

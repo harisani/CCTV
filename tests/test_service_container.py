@@ -37,9 +37,19 @@ class TestSettings:
     camera_frame_width = 1280
     camera_frame_height = 720
     camera_reconnect_delay_seconds = 3.0
+    camera_open_timeout_milliseconds = 1500
+    camera_read_timeout_milliseconds = 2500
 
 
 class ServiceContainerTest(unittest.TestCase):
+    def test_camera_uses_bounded_capture_timeouts_from_settings(self) -> None:
+        container = ServiceContainer(TestSettings())
+
+        camera = container.camera("camera-1", "rtsp://example.invalid/live")
+
+        self.assertEqual(camera.open_timeout_milliseconds, 1500)
+        self.assertEqual(camera.read_timeout_milliseconds, 2500)
+
     def test_reuses_stateless_services_and_creates_isolated_camera_readers(self) -> None:
         container = ServiceContainer(TestSettings())
 

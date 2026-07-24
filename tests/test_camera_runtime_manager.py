@@ -1,4 +1,6 @@
 import asyncio
+import threading
+import time
 import unittest
 from types import SimpleNamespace
 from uuid import uuid4
@@ -38,6 +40,27 @@ class FakeCameraService:
         return self.frame_number, FakeFrame()
 
 
+class CoordinatedDisconnectCameraService(FakeCameraService):
+    def __init__(
+        self,
+        all_disconnects_started: threading.Event,
+        counter: list[int],
+        counter_lock: threading.Lock,
+    ) -> None:
+        super().__init__()
+        self._all_disconnects_started = all_disconnects_started
+        self._counter = counter
+        self._counter_lock = counter_lock
+
+    def disconnect(self) -> None:
+        with self._counter_lock:
+            self._counter[0] += 1
+            if self._counter[0] == 3:
+                self._all_disconnects_started.set()
+        self._all_disconnects_started.wait(timeout=1)
+        super().disconnect()
+
+
 class FakeCatalog:
     def __init__(self, camera: object) -> None:
         self.camera = camera
@@ -48,6 +71,15 @@ class FakeCatalog:
 
     async def update_health(self, _camera_id: object, *, status: str, **_fields: object) -> None:
         self.health.append(status)
+
+
+class MultiCameraCatalog(FakeCatalog):
+    def __init__(self, cameras: list[object]) -> None:
+        super().__init__(cameras[0])
+        self.cameras = cameras
+
+    async def list_enabled(self) -> list[object]:
+        return self.cameras
 
 
 class FakeHub:
@@ -110,9 +142,47 @@ class TestSettings:
     camera_read_fps = 10.0
     camera_frame_width = 720
     camera_frame_height = 480
+    camera_open_timeout_milliseconds = 1500
+    camera_read_timeout_milliseconds = 2500
 
 
 class CameraRuntimeManagerTest(unittest.IsolatedAsyncioTestCase):
+    async def test_disconnects_multiple_cameras_concurrently_during_shutdown(self) -> None:
+        cameras = [
+            SimpleNamespace(id=uuid4(), name=f"Camera {index}", rtsp_url=f"rtsp://camera/{index}")
+            for index in range(3)
+        ]
+        catalog = MultiCameraCatalog(cameras)
+        all_disconnects_started = threading.Event()
+        counter = [0]
+        counter_lock = threading.Lock()
+        manager = CameraRuntimeManager(
+            TestSettings(),
+            catalog,
+            FakeHub(),
+            camera_factory=lambda _camera_id, _url: CoordinatedDisconnectCameraService(
+                all_disconnects_started, counter, counter_lock
+            ),
+            jpeg_encoder=lambda _frame, _quality: b"jpeg",
+        )
+        await manager.start()
+        await asyncio.sleep(0.04)
+
+        started_at = time.monotonic()
+        await manager.stop()
+
+        self.assertTrue(all_disconnects_started.is_set())
+        self.assertLess(time.monotonic() - started_at, 0.5)
+
+    async def test_default_camera_has_bounded_capture_timeouts(self) -> None:
+        camera = SimpleNamespace(id=uuid4(), name="Demo", rtsp_url="rtsp://example/demo")
+        manager = CameraRuntimeManager(TestSettings(), FakeCatalog(camera), FakeHub())
+
+        service = manager._create_camera(str(camera.id), camera.rtsp_url)
+
+        self.assertEqual(service.open_timeout_milliseconds, 1500)
+        self.assertEqual(service.read_timeout_milliseconds, 2500)
+
     async def test_connects_publishes_and_reports_online(self) -> None:
         camera = SimpleNamespace(id=uuid4(), name="Demo", rtsp_url="rtsp://example/demo")
         catalog = FakeCatalog(camera)

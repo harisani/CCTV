@@ -1,7 +1,7 @@
 import time
 import unittest
 
-from app.services.camera_service import CameraService
+from app.services.camera_service import CameraService, OpenCvCaptureFactory
 
 
 class FakeCapture:
@@ -35,7 +35,61 @@ class BrokenCapture(FakeCapture):
         return False, None
 
 
+class FakeCv2:
+    CAP_FFMPEG = 1900
+    CAP_PROP_OPEN_TIMEOUT_MSEC = 53
+    CAP_PROP_READ_TIMEOUT_MSEC = 54
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, int, list[int]]] = []
+
+    def VideoCapture(self, url: str, backend: int, params: list[int]) -> FakeCapture:
+        self.calls.append((url, backend, params))
+        return FakeCapture(url)
+
+
 class CameraServiceTest(unittest.TestCase):
+    def test_opencv_factory_bounds_open_and_read_operations(self) -> None:
+        cv2 = FakeCv2()
+        factory = OpenCvCaptureFactory(
+            open_timeout_milliseconds=1_500,
+            read_timeout_milliseconds=2_500,
+            cv2_module=cv2,
+        )
+
+        capture = factory("rtsp://example.invalid/live")
+
+        self.assertTrue(capture.isOpened())
+        self.assertEqual(
+            cv2.calls,
+            [
+                (
+                    "rtsp://example.invalid/live",
+                    cv2.CAP_FFMPEG,
+                    [
+                        cv2.CAP_PROP_OPEN_TIMEOUT_MSEC,
+                        1_500,
+                        cv2.CAP_PROP_READ_TIMEOUT_MSEC,
+                        2_500,
+                    ],
+                )
+            ],
+        )
+
+    def test_rejects_non_positive_capture_timeouts(self) -> None:
+        with self.assertRaisesRegex(ValueError, "open_timeout_milliseconds"):
+            CameraService(
+                "test-camera",
+                "rtsp://example.invalid/live",
+                open_timeout_milliseconds=0,
+            )
+        with self.assertRaisesRegex(ValueError, "read_timeout_milliseconds"):
+            CameraService(
+                "test-camera",
+                "rtsp://example.invalid/live",
+                read_timeout_milliseconds=0,
+            )
+
     def test_reads_latest_frame_and_disconnects(self) -> None:
         service = CameraService(
             "test-camera",
