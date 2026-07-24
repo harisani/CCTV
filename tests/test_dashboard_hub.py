@@ -1,15 +1,27 @@
+import asyncio
+import logging
 import unittest
+from uuid import UUID
 
+import pytest
+from fastapi import status
+
+import app.api.routes.dashboard_ws as dashboard_ws_module
 from app.dashboard.realtime import DashboardHub
 
 
 class FakeWebSocket:
-    def __init__(self) -> None:
+    def __init__(self, query_params: dict[str, str] | None = None) -> None:
         self.accepted = False
+        self.close_code: int | None = None
         self.messages: list[dict[str, object]] = []
+        self.query_params = query_params or {}
 
     async def accept(self) -> None:
         self.accepted = True
+
+    async def close(self, code: int, reason: str = "") -> None:
+        self.close_code = code
 
     async def send_json(self, message: dict[str, object]) -> None:
         self.messages.append(message)
@@ -63,6 +75,35 @@ class DashboardHubTest(unittest.IsolatedAsyncioTestCase):
         await hub.connect(websocket)
         with self.assertRaises(ValueError):
             await hub.subscribe(websocket, [f"camera-{index}" for index in range(17)])
+
+
+def test_dashboard_websocket_binds_context_without_logging_token(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    bound: list[str] = []
+    reset: list[object] = []
+    marker = object()
+
+    monkeypatch.setattr(
+        dashboard_ws_module,
+        "bind_correlation_id",
+        lambda value: bound.append(value) or marker,
+    )
+    monkeypatch.setattr(
+        dashboard_ws_module,
+        "reset_correlation_id",
+        lambda token: reset.append(token),
+    )
+    websocket = FakeWebSocket(query_params={"token": "secret-websocket-token"})
+
+    with caplog.at_level(logging.INFO):
+        asyncio.run(dashboard_ws_module.dashboard_websocket(websocket))
+
+    UUID(bound[0])
+    assert reset == [marker]
+    assert websocket.close_code == status.WS_1008_POLICY_VIOLATION
+    assert "secret-websocket-token" not in caplog.text
 
 
 if __name__ == "__main__":
