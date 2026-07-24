@@ -36,6 +36,9 @@ class VirtualLineConfig:
     event_cooldown_frames: int = 3
     enabled: bool = True
     normalized: bool = False
+    virtual_line_id: UUID | None = None
+    from_zone_id: UUID | None = None
+    to_zone_id: UUID | None = None
 
     def __post_init__(self) -> None:
         if not self.line_id.strip():
@@ -94,6 +97,9 @@ class VirtualLineConfig:
             event_cooldown_frames=event_cooldown_frames,
             enabled=bool(value.get("enabled", True)),
             normalized=True,
+            virtual_line_id=_optional_uuid(value.get("virtual_line_id")),
+            from_zone_id=_optional_uuid(value.get("from_zone_id")),
+            to_zone_id=_optional_uuid(value.get("to_zone_id")),
         )
 
 
@@ -107,6 +113,9 @@ class CrossingEvent:
     tracking_id: int
     centroid: Point
     occurred_at: datetime
+    virtual_line_id: UUID | None = None
+    origin_zone_id: UUID | None = None
+    destination_zone_id: UUID | None = None
 
 
 class CrossingService:
@@ -125,7 +134,16 @@ class CrossingService:
         self._frame_size: tuple[int, int] | None = None
         self._logger = logging.getLogger(__name__)
 
-    def process(self, tracks: Sequence[TrackedDetection]) -> list[CrossingEvent]:
+    @property
+    def config(self) -> VirtualLineConfig:
+        return self._config
+
+    def process(
+        self,
+        tracks: Sequence[TrackedDetection],
+        *,
+        occurred_at: datetime | None = None,
+    ) -> list[CrossingEvent]:
         """Evaluate current tracks and return only new crossing events."""
         self._frame_number += 1
         if not self._config.enabled:
@@ -147,7 +165,18 @@ class CrossingService:
                         line_id=self._config.line_id,
                         tracking_id=track.tracking_id,
                         centroid=track.centroid,
-                        occurred_at=datetime.now(UTC),
+                        occurred_at=occurred_at or datetime.now(UTC),
+                        virtual_line_id=self._config.virtual_line_id,
+                        origin_zone_id=(
+                            self._config.from_zone_id
+                            if event_type == CrossingType.ENTER
+                            else self._config.to_zone_id
+                        ),
+                        destination_zone_id=(
+                            self._config.to_zone_id
+                            if event_type == CrossingType.ENTER
+                            else self._config.from_zone_id
+                        ),
                     )
                     self._last_event_frame[track.tracking_id] = self._frame_number
                     events.append(event)
@@ -241,6 +270,41 @@ class CrossingService:
         return get_settings()
 
 
+class MultiLineCrossingService:
+    """Evaluate isolated crossing state for every configured camera line."""
+
+    def __init__(self, configs: Sequence[VirtualLineConfig]) -> None:
+        line_ids = [config.line_id for config in configs]
+        if len(line_ids) != len(set(line_ids)):
+            raise ValueError("line_id must be unique within one camera")
+        self._services = tuple(CrossingService(config) for config in configs)
+
+    @property
+    def configs(self) -> tuple[VirtualLineConfig, ...]:
+        return tuple(service.config for service in self._services)
+
+    def process(
+        self,
+        tracks: Sequence[TrackedDetection],
+        *,
+        occurred_at: datetime | None = None,
+    ) -> list[CrossingEvent]:
+        events: list[CrossingEvent] = []
+        for service in self._services:
+            events.extend(
+                service.process(tracks, occurred_at=occurred_at)
+            )
+        return events
+
+    def reset(self) -> None:
+        for service in self._services:
+            service.reset()
+
+    def set_frame_size(self, width: int, height: int) -> None:
+        for service in self._services:
+            service.set_frame_size(width, height)
+
+
 def _parse_polygon_points(raw_points: str) -> tuple[Point, ...]:
     if not raw_points.strip():
         return ()
@@ -252,6 +316,12 @@ def _parse_polygon_points(raw_points: str) -> tuple[Point, ...]:
         )
     except ValueError as error:
         raise ValueError("CROSSING_POLYGON_POINTS must have format 'x,y;x,y;x,y'") from error
+
+
+def _optional_uuid(value: Any) -> UUID | None:
+    if value in (None, ""):
+        return None
+    return value if isinstance(value, UUID) else UUID(str(value))
 
 
 def _point_in_polygon(point: Point, polygon: Sequence[Point]) -> bool:

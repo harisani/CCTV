@@ -109,9 +109,9 @@ class FakePipeline:
     def __init__(self) -> None:
         self.started = False
         self.stopped = False
-        self.crossing_configs: list[dict[str, object] | None] = []
+        self.crossing_configs: list[object] = []
 
-    def configure_crossing(self, config: dict[str, object] | None) -> None:
+    def configure_crossing(self, config: object) -> None:
         self.crossing_configs.append(config)
 
     async def start(self) -> None:
@@ -158,6 +158,63 @@ class TestSettings:
 
 
 class CameraRuntimeManagerTest(unittest.IsolatedAsyncioTestCase):
+    async def test_uses_all_enabled_database_virtual_lines(self) -> None:
+        camera_id = uuid4()
+        zone_a = uuid4()
+        zone_b = uuid4()
+        lines = [
+            SimpleNamespace(
+                id=uuid4(),
+                line_key="line-a",
+                line_type=SimpleNamespace(value="vertical"),
+                position=0.25,
+                points=None,
+                enter_direction="right",
+                from_zone_id=zone_a,
+                to_zone_id=zone_b,
+                enabled=True,
+            ),
+            SimpleNamespace(
+                id=uuid4(),
+                line_key="disabled",
+                line_type=SimpleNamespace(value="horizontal"),
+                position=0.75,
+                points=None,
+                enter_direction="down",
+                from_zone_id=None,
+                to_zone_id=zone_b,
+                enabled=False,
+            ),
+        ]
+        camera = SimpleNamespace(
+            id=camera_id,
+            name="Transition camera",
+            location="Mixing",
+            rtsp_url="rtsp://example/transition",
+            crossing_config=None,
+            virtual_lines=lines,
+        )
+        pipeline = FakePipeline()
+        manager = CameraRuntimeManager(
+            TestSettings(),
+            FakeCatalog(camera),
+            FakeHub(),
+            camera_factory=lambda _camera_id, _url: FakeCameraService(),
+            jpeg_encoder=lambda _frame, _quality: b"jpeg",
+            pipeline_factory=lambda _camera_id: pipeline,
+        )
+
+        await manager.start()
+        await asyncio.sleep(0.06)
+        await manager.stop()
+
+        configured = pipeline.crossing_configs[0]
+        self.assertIsInstance(configured, list)
+        self.assertEqual(len(configured), 1)
+        self.assertEqual(configured[0]["line_id"], "line-a")
+        self.assertEqual(configured[0]["from_zone_id"], str(zone_a))
+        self.assertEqual(configured[0]["to_zone_id"], str(zone_b))
+
     async def test_shutdown_deadline_contains_stuck_pipeline_cleanup(self) -> None:
         camera = SimpleNamespace(
             id=uuid4(),

@@ -14,6 +14,9 @@ from app.repository.snapshot_repository import SnapshotRepository
 from app.repository.statistics_repository import StatisticsRepository
 from app.repository.topology_repository import TopologyRepository
 from app.repository.user_repository import UserRepository
+from app.repository.zone_transition_repository import (
+    ZoneTransitionRepository,
+)
 
 __all__ = [
     "AuditRepository",
@@ -30,4 +33,5 @@ __all__ = [
     "StatisticsRepository",
     "TopologyRepository",
     "UserRepository",
+    "ZoneTransitionRepository",
 ]

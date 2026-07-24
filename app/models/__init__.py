@@ -35,6 +35,8 @@ from app.models.entities import (
     VirtualLineType,
     Zone,
     ZoneAdjacency,
+    ZoneEvent,
+    ZoneEventType,
     ZoneSensitivity,
 )
 
@@ -73,5 +75,7 @@ __all__ = [
     "VirtualLineType",
     "Zone",
     "ZoneAdjacency",
+    "ZoneEvent",
+    "ZoneEventType",
     "ZoneSensitivity",
 ]

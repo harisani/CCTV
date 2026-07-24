@@ -70,7 +70,9 @@ class FakeCrossing:
     def __init__(self) -> None:
         self.calls = 0
 
-    def process(self, tracks: list[TrackedDetection]) -> list[CrossingEvent]:
+    def process(
+        self, tracks: list[TrackedDetection], **_fields: object
+    ) -> list[CrossingEvent]:
         self.calls += 1
         if self.calls != 2:
             return []
@@ -136,7 +138,9 @@ class FakePersistence:
     async def mark_camera_presence_uncertain(self, *_args: object, **_fields: object) -> dict[str, int]:
         return {"confirmed": 0, "uncertain": 1, "total": 0}
 
-    async def update_trackings(self, _updates: object) -> None:
+    async def update_trackings(
+        self, _updates: object, **_fields: object
+    ) -> None:
         pass
 
     async def persist_crossing(self, **fields: object) -> tuple[bool, dict]:

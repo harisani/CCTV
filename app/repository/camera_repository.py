@@ -1,5 +1,6 @@
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models import Camera
 from app.repository.base import BaseRepository
@@ -13,7 +14,12 @@ class CameraRepository(BaseRepository[Camera]):
         return await self.session.scalar(select(Camera).where(Camera.name == name))
 
     async def list_enabled(self) -> list[Camera]:
-        return list((await self.session.scalars(select(Camera).where(Camera.enabled.is_(True)))).all())
+        statement = (
+            select(Camera)
+            .where(Camera.enabled.is_(True))
+            .options(selectinload(Camera.virtual_lines))
+        )
+        return list((await self.session.scalars(statement)).all())
 
     async def list_filtered(
         self,

@@ -30,6 +30,8 @@ from app.models import (
     Tracking,
     VirtualLine,
     Zone,
+    ZoneEvent,
+    ZoneEventType,
 )
 from app.repository.person_repository import PersonRepository
 if TYPE_CHECKING:
@@ -83,6 +85,10 @@ class PipelineRepository:
         byte_track_id: int,
         person_id: UUID | None,
         centroid: tuple[float, float],
+        bbox: tuple[float, float, float, float],
+        detector_confidence: float,
+        direction: str,
+        detector_model: str,
         started_at: datetime,
     ) -> UUID:
         async with self._session_factory() as session:
@@ -101,7 +107,17 @@ class PipelineRepository:
                 person_id=person_id,
                 byte_track_id=byte_track_id,
                 started_at=started_at,
+                last_seen_at=started_at,
                 last_centroid={"x": centroid[0], "y": centroid[1]},
+                last_bbox={
+                    "x1": bbox[0],
+                    "y1": bbox[1],
+                    "x2": bbox[2],
+                    "y2": bbox[3],
+                },
+                detector_confidence=detector_confidence,
+                direction=direction,
+                detector_model=detector_model,
                 is_active=True,
             )
             session.add(tracking)
@@ -109,16 +125,33 @@ class PipelineRepository:
             return tracking.id
 
     async def update_trackings(
-        self, updates: list[tuple[UUID, tuple[float, float]]]
+        self,
+        updates: list[tuple[UUID, "TrackedDetection"]],
+        *,
+        observed_at: datetime,
     ) -> None:
         if not updates:
             return
         async with self._session_factory() as session:
-            for tracking_id, centroid in updates:
+            for tracking_id, track in updates:
                 await session.execute(
                     update(Tracking)
                     .where(Tracking.id == tracking_id, Tracking.is_active.is_(True))
-                    .values(last_centroid={"x": centroid[0], "y": centroid[1]})
+                    .values(
+                        last_seen_at=observed_at,
+                        last_centroid={
+                            "x": track.centroid[0],
+                            "y": track.centroid[1],
+                        },
+                        last_bbox={
+                            "x1": track.bbox[0],
+                            "y1": track.bbox[1],
+                            "x2": track.bbox[2],
+                            "y2": track.bbox[3],
+                        },
+                        detector_confidence=track.confidence,
+                        direction=track.direction,
+                    )
                 )
             await session.commit()
 
@@ -161,38 +194,98 @@ class PipelineRepository:
             tracking = await session.get(Tracking, database_tracking_id)
             if tracking is None:
                 raise ValueError("Tracking row is required for a presence event")
-            open_presence = await self._find_open_presence(
-                session,
-                person_id=person_id,
-                database_tracking_id=database_tracking_id,
-            )
             crossing_type = EventType(crossing.event_type.value)
-            presence_match = "NEW_SESSION" if crossing_type == EventType.ENTER else "IDENTITY"
-            if crossing_type == EventType.ENTER and open_presence is not None:
-                self._logger_for_transition(
-                    "Duplicate ENTER suppressed",
-                    crossing=crossing,
-                    person_id=person_id,
+            virtual_line = None
+            if crossing.virtual_line_id is not None:
+                virtual_line = await session.get(
+                    VirtualLine, crossing.virtual_line_id
                 )
-                return False, {"reason": "duplicate_enter", "discard_snapshot": True}
-            if crossing_type == EventType.EXIT and open_presence is None:
-                open_presence = await session.scalar(
-                    select(PresenceSession)
-                    .where(
-                        PresenceSession.camera_id == tracking.camera_id,
-                        PresenceSession.status.in_((PresenceStatus.ACTIVE, PresenceStatus.UNCERTAIN)),
+                if virtual_line is not None and (
+                    virtual_line.camera_id != tracking.camera_id
+                    or not virtual_line.enabled
+                ):
+                    raise ValueError(
+                        "Virtual line does not belong to the active camera"
                     )
-                    .order_by(PresenceSession.entered_at)
-                    .with_for_update()
+            if virtual_line is None:
+                virtual_line = await session.scalar(
+                    select(VirtualLine).where(
+                        VirtualLine.camera_id == tracking.camera_id,
+                        VirtualLine.line_key == crossing.line_id,
+                        VirtualLine.enabled.is_(True),
+                    )
                 )
-                presence_match = "CAMERA_FIFO"
-            if crossing_type == EventType.EXIT and open_presence is None:
-                self._logger_for_transition(
-                    "Orphan EXIT suppressed",
-                    crossing=crossing,
+            origin_zone_id = crossing.origin_zone_id
+            destination_zone_id = crossing.destination_zone_id
+            if virtual_line is not None:
+                origin_zone_id = origin_zone_id or (
+                    virtual_line.from_zone_id
+                    if crossing_type == EventType.ENTER
+                    else virtual_line.to_zone_id
+                )
+                destination_zone_id = destination_zone_id or (
+                    virtual_line.to_zone_id
+                    if crossing_type == EventType.ENTER
+                    else virtual_line.from_zone_id
+                )
+            is_zone_transition = (
+                origin_zone_id is not None
+                and destination_zone_id is not None
+                and origin_zone_id != destination_zone_id
+            )
+
+            open_presence = None
+            presence_match = "ZONE_TRANSITION_DEFERRED"
+            if not is_zone_transition:
+                open_presence = await self._find_open_presence(
+                    session,
                     person_id=person_id,
+                    database_tracking_id=database_tracking_id,
                 )
-                return False, {"reason": "orphan_exit", "discard_snapshot": True}
+                presence_match = (
+                    "NEW_SESSION"
+                    if crossing_type == EventType.ENTER
+                    else "IDENTITY"
+                )
+                if (
+                    crossing_type == EventType.ENTER
+                    and open_presence is not None
+                ):
+                    self._logger_for_transition(
+                        "Duplicate ENTER suppressed",
+                        crossing=crossing,
+                        person_id=person_id,
+                    )
+                    return False, {
+                        "reason": "duplicate_enter",
+                        "discard_snapshot": True,
+                    }
+                if crossing_type == EventType.EXIT and open_presence is None:
+                    open_presence = await session.scalar(
+                        select(PresenceSession)
+                        .where(
+                            PresenceSession.camera_id == tracking.camera_id,
+                            PresenceSession.status.in_(
+                                (
+                                    PresenceStatus.ACTIVE,
+                                    PresenceStatus.UNCERTAIN,
+                                )
+                            ),
+                        )
+                        .order_by(PresenceSession.entered_at)
+                        .with_for_update()
+                    )
+                    presence_match = "CAMERA_FIFO"
+                if crossing_type == EventType.EXIT and open_presence is None:
+                    self._logger_for_transition(
+                        "Orphan EXIT suppressed",
+                        crossing=crossing,
+                        person_id=person_id,
+                    )
+                    return False, {
+                        "reason": "orphan_exit",
+                        "discard_snapshot": True,
+                    }
             event = Event(
                 id=crossing.event_id,
                 tracking_id=database_tracking_id,
@@ -207,6 +300,14 @@ class PipelineRepository:
                     "direction": track.direction,
                     "snapshot_error": snapshot_error,
                     "presence_match": presence_match,
+                    "origin_zone_id": (
+                        str(origin_zone_id) if origin_zone_id else None
+                    ),
+                    "destination_zone_id": (
+                        str(destination_zone_id)
+                        if destination_zone_id
+                        else None
+                    ),
                     "matched_presence_person_id": (
                         str(open_presence.person_id)
                         if open_presence is not None and open_presence.person_id is not None
@@ -216,14 +317,24 @@ class PipelineRepository:
             )
             session.add(event)
             await session.flush()
-            await self._apply_presence_event(
-                session,
+            if not is_zone_transition:
+                await self._apply_presence_event(
+                    session,
+                    event=event,
+                    database_tracking_id=database_tracking_id,
+                    person_id=person_id,
+                    tracking=tracking,
+                    existing=open_presence,
+                )
+            zone_events = self._build_zone_events(
                 event=event,
-                database_tracking_id=database_tracking_id,
-                person_id=person_id,
                 tracking=tracking,
-                existing=open_presence,
+                track=track,
+                virtual_line=virtual_line,
+                origin_zone_id=origin_zone_id,
+                destination_zone_id=destination_zone_id,
             )
+            session.add_all(zone_events)
             legacy_snapshot: Snapshot | None = None
             if snapshot is not None:
                 legacy_snapshot = Snapshot(
@@ -241,20 +352,7 @@ class PipelineRepository:
                 )
                 session.add(legacy_snapshot)
 
-            virtual_line = await session.scalar(
-                select(VirtualLine).where(
-                    VirtualLine.camera_id == tracking.camera_id,
-                    VirtualLine.line_key == crossing.line_id,
-                    VirtualLine.enabled.is_(True),
-                )
-            )
-            zone_id = None
-            if virtual_line is not None:
-                zone_id = (
-                    virtual_line.to_zone_id
-                    if crossing_type == EventType.ENTER
-                    else virtual_line.from_zone_id
-                )
+            zone_id = destination_zone_id
             if zone_id is None:
                 mapping = await session.scalar(
                     select(CameraZoneMapping)
@@ -315,6 +413,14 @@ class PipelineRepository:
                     "line_id": crossing.line_id,
                     "byte_track_id": track.tracking_id,
                     "person_id": str(person_id) if person_id else None,
+                    "origin_zone_id": (
+                        str(origin_zone_id) if origin_zone_id else None
+                    ),
+                    "destination_zone_id": (
+                        str(destination_zone_id)
+                        if destination_zone_id
+                        else None
+                    ),
                 },
                 captured_at=crossing.occurred_at,
                 failed_at=crossing.occurred_at if snapshot is None else None,
@@ -400,7 +506,73 @@ class PipelineRepository:
                     if processing_job is not None
                     else None
                 ),
+                "zone_transition": {
+                    "origin_zone_id": (
+                        str(origin_zone_id) if origin_zone_id else None
+                    ),
+                    "destination_zone_id": (
+                        str(destination_zone_id)
+                        if destination_zone_id
+                        else None
+                    ),
+                    "zone_event_ids": [str(item.id) for item in zone_events],
+                },
             }
+
+    @staticmethod
+    def _build_zone_events(
+        *,
+        event: Event,
+        tracking: Tracking,
+        track: "TrackedDetection",
+        virtual_line: VirtualLine | None,
+        origin_zone_id: UUID | None,
+        destination_zone_id: UUID | None,
+    ) -> list[ZoneEvent]:
+        movements: list[tuple[ZoneEventType, UUID]] = []
+        if origin_zone_id is not None:
+            movements.append((ZoneEventType.ZONE_EXIT, origin_zone_id))
+        if (
+            destination_zone_id is not None
+            and destination_zone_id != origin_zone_id
+        ):
+            movements.append(
+                (ZoneEventType.ZONE_ENTER, destination_zone_id)
+            )
+        return [
+            ZoneEvent(
+                id=uuid4(),
+                idempotency_key=(
+                    f"zone-transition:{event.id}:"
+                    f"{event_type.value.lower()}:{zone_id}"
+                ),
+                transition_id=event.id,
+                crossing_event_id=event.id,
+                tracking_id=tracking.id,
+                camera_id=tracking.camera_id,
+                virtual_line_id=(
+                    virtual_line.id if virtual_line is not None else None
+                ),
+                zone_id=zone_id,
+                origin_zone_id=origin_zone_id,
+                destination_zone_id=destination_zone_id,
+                event_type=event_type,
+                local_track_id=track.tracking_id,
+                direction=track.direction,
+                centroid={
+                    "x": event.centroid["x"],
+                    "y": event.centroid["y"],
+                },
+                confidence=track.confidence,
+                occurred_at=event.occurred_at,
+                event_metadata={
+                    "line_id": event.line_id,
+                    "legacy_event_type": event.event_type.value,
+                },
+                created_at=event.occurred_at,
+            )
+            for event_type, zone_id in movements
+        ]
 
     @staticmethod
     async def _find_open_presence(

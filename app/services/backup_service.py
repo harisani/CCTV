@@ -42,11 +42,12 @@ from app.models import (
     VirtualLine,
     Zone,
     ZoneAdjacency,
+    ZoneEvent,
 )
 from app.repository import AuditRepository, BackupRepository
 
 ARCHIVE_FORMAT = "cctv-people-flow-observational-backup"
-ARCHIVE_SCHEMA_VERSION = 5
+ARCHIVE_SCHEMA_VERSION = 6
 ARCHIVE_ENTITIES_V1 = frozenset(
     {"cameras", "persons", "trackings", "events", "snapshots", "users", "audit_logs"}
 )
@@ -63,7 +64,8 @@ ARCHIVE_ENTITIES_V4 = ARCHIVE_ENTITIES_V3 | {
     "capture_events",
     "evidence_assets",
 }
-ARCHIVE_ENTITIES = ARCHIVE_ENTITIES_V4 | {"ai_processing_jobs"}
+ARCHIVE_ENTITIES_V5 = ARCHIVE_ENTITIES_V4 | {"ai_processing_jobs"}
+ARCHIVE_ENTITIES = ARCHIVE_ENTITIES_V5 | {"zone_events"}
 _backup_lock = asyncio.Lock()
 
 
@@ -239,7 +241,14 @@ class ArchiveCodec:
         if manifest.get("format") != ARCHIVE_FORMAT:
             raise ValueError("Archive format is not supported")
         schema_version = manifest.get("schema_version")
-        if schema_version not in {1, 2, 3, 4, ARCHIVE_SCHEMA_VERSION}:
+        if schema_version not in {
+            1,
+            2,
+            3,
+            4,
+            5,
+            ARCHIVE_SCHEMA_VERSION,
+        }:
             raise ValueError("Archive schema version is not supported")
         try:
             date.fromisoformat(manifest["backup_date"])
@@ -278,7 +287,8 @@ class ArchiveCodec:
             2: ARCHIVE_ENTITIES_V2,
             3: ARCHIVE_ENTITIES_V3,
             4: ARCHIVE_ENTITIES_V4,
-            5: ARCHIVE_ENTITIES,
+            5: ARCHIVE_ENTITIES_V5,
+            6: ARCHIVE_ENTITIES,
         }[schema_version]
         for entity in required_entities:
             member = f"data/{entity}.jsonl"
@@ -675,6 +685,18 @@ class BackupService:
                 )
             ).all()
         )
+        zone_events = list(
+            (
+                await session.scalars(
+                    select(ZoneEvent)
+                    .where(
+                        ZoneEvent.occurred_at >= start_at,
+                        ZoneEvent.occurred_at < end_at,
+                    )
+                    .order_by(ZoneEvent.occurred_at)
+                )
+            ).all()
+        )
         presence_sessions = list(
             (
                 await session.scalars(
@@ -761,6 +783,7 @@ class BackupService:
                 )
                 for item in processing_jobs
             ],
+            "zone_events": [_model_record(item) for item in zone_events],
             "presence_sessions": [_model_record(item) for item in presence_sessions],
             "snapshots": snapshot_records,
             "users": [

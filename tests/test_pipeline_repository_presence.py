@@ -13,6 +13,8 @@ from app.models import (
     Event,
     PresenceStatus,
     Tracking,
+    ZoneEvent,
+    ZoneEventType,
 )
 from app.repository.pipeline_repository import PipelineRepository
 from app.services.crossing_service import CrossingEvent, CrossingType
@@ -46,6 +48,9 @@ class FakeSession:
     def add(self, value: object) -> None:
         self.added.append(value)
 
+    def add_all(self, values: list[object]) -> None:
+        self.added.extend(values)
+
     async def flush(self) -> None:
         return None
 
@@ -70,6 +75,60 @@ def tracked(track_id: int) -> TrackedDetection:
 
 
 class PipelineRepositoryPresenceTest(unittest.IsolatedAsyncioTestCase):
+    async def test_zone_to_zone_crossing_persists_exit_and_enter_pair(
+        self,
+    ) -> None:
+        database_tracking_id = uuid4()
+        camera_id = uuid4()
+        origin_zone_id = uuid4()
+        destination_zone_id = uuid4()
+        transition_id = uuid4()
+        session = FakeSession(
+            SimpleNamespace(id=database_tracking_id, camera_id=camera_id),
+            [None],
+        )
+        repository = PipelineRepository(lambda: session)
+
+        created, payload = await repository.persist_crossing(
+            database_tracking_id=database_tracking_id,
+            person_id=None,
+            crossing=CrossingEvent(
+                transition_id,
+                CrossingType.ENTER,
+                "mixing-boundary",
+                41,
+                (35, 65),
+                datetime.now(UTC),
+                origin_zone_id=origin_zone_id,
+                destination_zone_id=destination_zone_id,
+            ),
+            track=tracked(41),
+            snapshot=None,
+            snapshot_error="capture unavailable",
+        )
+
+        self.assertTrue(created)
+        zone_events = [
+            item for item in session.added if isinstance(item, ZoneEvent)
+        ]
+        self.assertEqual(len(zone_events), 2)
+        self.assertEqual(
+            {item.event_type for item in zone_events},
+            {ZoneEventType.ZONE_EXIT, ZoneEventType.ZONE_ENTER},
+        )
+        self.assertEqual(
+            {item.transition_id for item in zone_events},
+            {transition_id},
+        )
+        self.assertEqual(
+            payload["zone_transition"]["origin_zone_id"],
+            str(origin_zone_id),
+        )
+        self.assertEqual(
+            payload["zone_transition"]["destination_zone_id"],
+            str(destination_zone_id),
+        )
+
     async def test_enter_persists_legacy_and_phase3_evidence_atomically(
         self,
     ) -> None:
@@ -78,7 +137,7 @@ class PipelineRepositoryPresenceTest(unittest.IsolatedAsyncioTestCase):
         event_id = uuid4()
         session = FakeSession(
             SimpleNamespace(id=database_tracking_id, camera_id=camera_id),
-            [None, None, None],
+            [None, None, None, None],
         )
         repository = PipelineRepository(lambda: session)
         image = Path("/tmp/phase3-annotated.jpg")
@@ -147,7 +206,7 @@ class PipelineRepositoryPresenceTest(unittest.IsolatedAsyncioTestCase):
         database_tracking_id = uuid4()
         session = FakeSession(
             SimpleNamespace(id=database_tracking_id, camera_id=uuid4()),
-            [None, None],
+            [None, None, None],
         )
         repository = PipelineRepository(lambda: session)
 
@@ -185,7 +244,7 @@ class PipelineRepositoryPresenceTest(unittest.IsolatedAsyncioTestCase):
         )
         session = FakeSession(
             SimpleNamespace(id=database_tracking_id, camera_id=camera_id),
-            [None, open_presence, None, None],
+            [None, None, open_presence, None, None],
         )
         repository = PipelineRepository(lambda: session)
 

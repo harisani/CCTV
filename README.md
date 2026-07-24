@@ -455,6 +455,39 @@ Konfigurasi worker berasal dari `.env`, terutama `ENABLE_AI_WORKER`,
 verifikasi tersedia di
 [`docs/audits/2026-07-24-phase4-async-processing-report.md`](docs/audits/2026-07-24-phase4-async-processing-report.md).
 
+### Person detection, local tracking, dan transisi zona
+
+Phase 5 memakai YOLO dan ByteTrack yang sudah tersedia sebagai capture-time
+lightweight pipeline, tetapi sekarang menyimpan local track sebagai observasi
+yang lebih lengkap: bounding box terakhir, centroid, confidence, direction,
+model detector, `started_at`, dan `last_seen_at`.
+
+Runtime kamera memuat seluruh virtual line aktif dari PostgreSQL. Setiap line
+memiliki state crossing dan hysteresis sendiri, sehingga satu kamera dapat
+memantau beberapa batas zona tanpa mencampur status track. Untuk line dengan
+`from_zone_id` dan `to_zone_id`, satu crossing menghasilkan dua record immutable
+dengan `transition_id` yang sama:
+
+```text
+ZONE_EXIT zona asal + ZONE_ENTER zona tujuan
+```
+
+Arah sebaliknya otomatis menukar zona asal dan tujuan. Pembuatan legacy event,
+capture, evidence, processing job, dan pasangan zone event berada dalam satu
+transaksi. Occupancy antarzona belum diubah pada phase ini; pemrosesannya
+dilakukan oleh Occupancy Engine pada Phase 9.
+
+Endpoint histori Phase 5:
+
+```text
+GET /api/v1/zone-events
+GET /api/v1/zone-events/{event_id}
+GET /api/v1/local-tracks
+```
+
+Detail implementasi dan batas phase tersedia di
+[`docs/audits/2026-07-24-phase5-local-zone-transition-report.md`](docs/audits/2026-07-24-phase5-local-zone-transition-report.md).
+
 ### Okupansi tahan gangguan kamera
 
 Jumlah orang saat ini berasal dari sesi keberadaan yang dibuka oleh event
@@ -489,9 +522,9 @@ app/
 ├── api/          HTTP routes, JWT, schema, DI, dan error handler
 ├── config/       Settings Pydantic dari .env
 ├── database/     Engine dan async SQLAlchemy session
-├── models/       Entitas ORM termasuk topology, capture, evidence, AI job, backup, dan DR
-├── repository/   Query per entitas, transaksi pipeline, evidence, dan durable queue
-├── services/     Kamera, capture, worker AI, topology, backup/DR, dan scheduler
+├── models/       Entitas ORM termasuk topology, local track, zone event, evidence, dan AI job
+├── repository/   Query, transaksi capture/transition, evidence, dan durable queue
+├── services/     Kamera, multi-line crossing, worker AI, topology, backup/DR, dan scheduler
 ├── detector/     Adapter YOLOv11
 ├── tracker/      Adapter ByteTrack + riwayat centroid
 ├── reid/         OSNet/TorchReID dan pencocokan embedding

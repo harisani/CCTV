@@ -28,7 +28,7 @@ class _CameraRuntime:
     rtsp_url: str
     service: CameraService
     location: str | None = None
-    crossing_config: dict[str, Any] | None = None
+    crossing_config: list[dict[str, Any]] | dict[str, Any] | None = None
     pipeline: CameraRealtimePipeline | None = None
     last_ai_frame: int = 0
     last_tracks: list[dict[str, Any]] | None = None
@@ -219,7 +219,7 @@ class CameraRuntimeManager:
                 await self._report_health(runtime, "OFFLINE", None, None, force=True)
 
         for camera_id, camera in definitions.items():
-            crossing_config = getattr(camera, "crossing_config", None)
+            crossing_config = self._runtime_crossing_config(camera)
             if camera_id in self._runtimes:
                 runtime = self._runtimes[camera_id]
                 runtime.name = camera.name
@@ -254,6 +254,42 @@ class CameraRuntimeManager:
                 last_tracks=[],
             )
             self._logger.info("Camera runtime registered camera_id=%s name=%s", camera_id, camera.name)
+
+    @staticmethod
+    def _runtime_crossing_config(
+        camera: Any,
+    ) -> list[dict[str, Any]] | dict[str, Any] | None:
+        lines = getattr(camera, "virtual_lines", None)
+        if lines:
+            configured = []
+            for line in lines:
+                if not line.enabled:
+                    continue
+                line_type = getattr(line.line_type, "value", line.line_type)
+                configured.append(
+                    {
+                        "virtual_line_id": str(line.id),
+                        "line_id": line.line_key,
+                        "line_type": line_type,
+                        "position": line.position,
+                        "polygon_points": line.points or [],
+                        "enter_direction": line.enter_direction,
+                        "from_zone_id": (
+                            str(line.from_zone_id)
+                            if line.from_zone_id is not None
+                            else None
+                        ),
+                        "to_zone_id": (
+                            str(line.to_zone_id)
+                            if line.to_zone_id is not None
+                            else None
+                        ),
+                        "enabled": True,
+                    }
+                )
+            if configured:
+                return configured
+        return getattr(camera, "crossing_config", None)
 
     async def _maintain_connections(self) -> None:
         now = time.monotonic()

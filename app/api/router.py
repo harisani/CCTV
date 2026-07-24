@@ -15,6 +15,7 @@ from app.api.routes.backups import router as backups_router
 from app.api.routes.disaster_recovery import router as disaster_recovery_router
 from app.api.routes.evidence import router as evidence_router
 from app.api.routes.topology import router as topology_router
+from app.api.routes.zone_transitions import router as zone_transitions_router
 
 api_router = APIRouter()
 api_router.include_router(health_router, tags=["system"])
@@ -31,4 +32,5 @@ api_router.include_router(backups_router, tags=["backups"])
 api_router.include_router(disaster_recovery_router, tags=["disaster-recovery"])
 api_router.include_router(evidence_router, tags=["evidence"])
 api_router.include_router(topology_router, tags=["topology"])
+api_router.include_router(zone_transitions_router, tags=["zone-transitions"])
 api_router.websocket("/ws/dashboard")(dashboard_websocket)

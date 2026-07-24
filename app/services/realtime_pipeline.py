@@ -13,7 +13,12 @@ from uuid import UUID
 from app.detector import DetectorService
 from app.reid import PersonReIdentificationService
 from app.repository import PipelineRepository
-from app.services.crossing_service import CrossingEvent, CrossingService, VirtualLineConfig
+from app.services.crossing_service import (
+    CrossingEvent,
+    CrossingService,
+    MultiLineCrossingService,
+    VirtualLineConfig,
+)
 from app.storage import SnapshotResult, SnapshotService
 from app.tracker import TrackedDetection, TrackingService
 
@@ -47,7 +52,7 @@ class CameraRealtimePipeline:
         detector: DetectorService,
         tracker: TrackingService,
         reidentification: PersonReIdentificationService,
-        crossing: CrossingService,
+        crossing: CrossingService | MultiLineCrossingService,
         snapshots: SnapshotService,
         persistence: PipelineRepository,
         inference_semaphore: asyncio.Semaphore,
@@ -97,26 +102,43 @@ class CameraRealtimePipeline:
             occurred_at=occurred_at or datetime.now(UTC),
         )
 
-    def configure_crossing(self, config: dict[str, Any] | None) -> None:
+    def configure_crossing(
+        self,
+        config: list[dict[str, Any]] | dict[str, Any] | None,
+    ) -> None:
         """Replace crossing geometry while preserving detector and model instances."""
         if config is None:
             crossing = CrossingService(settings=self._settings)
         else:
-            crossing = CrossingService(
-                VirtualLineConfig.from_mapping(
-                    config,
-                    max_inactive_frames=self._settings.crossing_max_inactive_frames,
-                    hysteresis_ratio=self._settings.crossing_hysteresis_ratio,
-                    event_cooldown_frames=self._settings.crossing_event_cooldown_frames,
-                )
+            mappings = config if isinstance(config, list) else [config]
+            crossing = MultiLineCrossingService(
+                [
+                    VirtualLineConfig.from_mapping(
+                        mapping,
+                        max_inactive_frames=(
+                            self._settings.crossing_max_inactive_frames
+                        ),
+                        hysteresis_ratio=(
+                            self._settings.crossing_hysteresis_ratio
+                        ),
+                        event_cooldown_frames=(
+                            self._settings.crossing_event_cooldown_frames
+                        ),
+                    )
+                    for mapping in mappings
+                ]
             )
         self._crossing.reset()
         self._crossing = crossing
+        configs = (
+            crossing.configs
+            if isinstance(crossing, MultiLineCrossingService)
+            else (crossing.config,)
+        )
         self._logger.info(
-            "Crossing configuration applied line=%s type=%s enabled=%s",
-            crossing._config.line_id,
-            crossing._config.line_type,
-            crossing._config.enabled,
+            "Crossing configuration applied lines=%s enabled=%s",
+            ",".join(item.line_id for item in configs) or "none",
+            sum(item.enabled for item in configs),
         )
 
     async def process(
@@ -140,11 +162,11 @@ class CameraRealtimePipeline:
         ]
         tracks = await asyncio.to_thread(self._tracker.update, people)
         await self._register_new_tracks(frame, tracks, captured_at)
-        await self._persist_centroids_if_due(tracks, now)
+        await self._persist_centroids_if_due(tracks, now, captured_at)
         shape = getattr(frame, "shape", None)
         if shape is not None and len(shape) >= 2:
             self._crossing.set_frame_size(int(shape[1]), int(shape[0]))
-        events = self._crossing.process(tracks)
+        events = self._crossing.process(tracks, occurred_at=captured_at)
         published_events = retried_events + await self._handle_crossings(
             frame, tracks, events
         )
@@ -177,6 +199,12 @@ class CameraRealtimePipeline:
                     byte_track_id=track.tracking_id,
                     person_id=person_id,
                     centroid=track.centroid,
+                    bbox=track.bbox,
+                    detector_confidence=track.confidence,
+                    direction=track.direction,
+                    detector_model=str(
+                        getattr(self._settings, "yolo_model_path", "unknown")
+                    ),
                     started_at=captured_at,
                 )
             except Exception:
@@ -256,7 +284,10 @@ class CameraRealtimePipeline:
         return person_id
 
     async def _persist_centroids_if_due(
-        self, tracks: list[TrackedDetection], now: float
+        self,
+        tracks: list[TrackedDetection],
+        now: float,
+        captured_at: datetime,
     ) -> None:
         if (
             now - self._last_persisted_at
@@ -264,12 +295,15 @@ class CameraRealtimePipeline:
         ):
             return
         updates = [
-            (self._database_tracks[track.tracking_id], track.centroid)
+            (self._database_tracks[track.tracking_id], track)
             for track in tracks
             if track.tracking_id in self._database_tracks
         ]
         try:
-            await self._persistence.update_trackings(updates)
+            await self._persistence.update_trackings(
+                updates,
+                observed_at=captured_at,
+            )
             self._last_persisted_at = now
         except Exception:
             self._logger.exception("Unable to persist tracking centroids")

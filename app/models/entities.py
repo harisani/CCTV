@@ -32,6 +32,11 @@ class EventType(StrEnum):
     EXIT = "EXIT"
 
 
+class ZoneEventType(StrEnum):
+    ZONE_ENTER = "ZONE_ENTER"
+    ZONE_EXIT = "ZONE_EXIT"
+
+
 class CaptureEventStatus(StrEnum):
     CAPTURED = "CAPTURED"
     QUEUED = "QUEUED"
@@ -477,12 +482,20 @@ class Tracking(Base):
     person_id: Mapped[UUID | None] = mapped_column(ForeignKey("persons.id", ondelete="SET NULL"), index=True)
     byte_track_id: Mapped[int] = mapped_column(Integer, index=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, index=True
+    )
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_centroid: Mapped[dict[str, float] | None] = mapped_column(JSON)
+    last_bbox: Mapped[dict[str, float] | None] = mapped_column(JSON)
+    detector_confidence: Mapped[float | None] = mapped_column(Float)
+    direction: Mapped[str | None] = mapped_column(String(20))
+    detector_model: Mapped[str | None] = mapped_column(String(120))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     camera: Mapped[Camera] = relationship(back_populates="trackings")
     person: Mapped[Person | None] = relationship(back_populates="trackings")
     events: Mapped[list[Event]] = relationship(back_populates="tracking", cascade="all, delete-orphan")
+    zone_events: Mapped[list[ZoneEvent]] = relationship(back_populates="tracking")
 
 
 class Event(Base):
@@ -500,6 +513,70 @@ class Event(Base):
     snapshot: Mapped[Snapshot | None] = relationship(back_populates="event", cascade="all, delete-orphan", uselist=False)
     capture_event: Mapped[CaptureEvent | None] = relationship(
         back_populates="source_event", uselist=False
+    )
+    zone_events: Mapped[list[ZoneEvent]] = relationship(
+        back_populates="crossing_event"
+    )
+
+
+class ZoneEvent(Base):
+    """Immutable local movement observation for one side of a zone transition."""
+
+    __tablename__ = "zone_events"
+    __table_args__ = (
+        UniqueConstraint(
+            "transition_id",
+            "event_type",
+            "zone_id",
+            name="uq_zone_event_transition_type_zone",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    idempotency_key: Mapped[str] = mapped_column(
+        String(200), unique=True, index=True
+    )
+    transition_id: Mapped[UUID] = mapped_column(index=True)
+    crossing_event_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("events.id", ondelete="SET NULL"), index=True
+    )
+    tracking_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("trackings.id", ondelete="SET NULL"), index=True
+    )
+    camera_id: Mapped[UUID] = mapped_column(
+        ForeignKey("cameras.id", ondelete="RESTRICT"), index=True
+    )
+    virtual_line_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("virtual_lines.id", ondelete="SET NULL"), index=True
+    )
+    zone_id: Mapped[UUID] = mapped_column(
+        ForeignKey("zones.id", ondelete="RESTRICT"), index=True
+    )
+    origin_zone_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("zones.id", ondelete="RESTRICT"), index=True
+    )
+    destination_zone_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("zones.id", ondelete="RESTRICT"), index=True
+    )
+    event_type: Mapped[ZoneEventType] = mapped_column(
+        Enum(ZoneEventType, name="zone_event_type"), index=True
+    )
+    local_track_id: Mapped[int] = mapped_column(Integer, index=True)
+    direction: Mapped[str | None] = mapped_column(String(20), index=True)
+    centroid: Mapped[dict[str, float]] = mapped_column(JSON)
+    confidence: Mapped[float | None] = mapped_column(Float)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
+    event_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow
+    )
+    crossing_event: Mapped[Event | None] = relationship(
+        back_populates="zone_events"
+    )
+    tracking: Mapped[Tracking | None] = relationship(
+        back_populates="zone_events"
     )
 
 
