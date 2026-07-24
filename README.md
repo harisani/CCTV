@@ -8,7 +8,18 @@ PostgreSQL, serta menampilkan data melalui FastAPI dan dashboard React.
 
 1. Salin konfigurasi contoh: `cp .env.example .env`.
 2. Ubah minimal `POSTGRES_PASSWORD`, `JWT_SECRET`, dan `API_ADMIN_PASSWORD`.
-3. Jalankan: `docker compose up --build`.
+3. Pada host Linux, siapkan direktori evidence bind-mounted agar dapat ditulis
+   oleh user API non-root (UID/GID `10001`):
+
+   ```bash
+   sudo install -d -o 10001 -g 10001 storage
+   ```
+
+4. Jalankan: `docker compose up --build`.
+
+Perintah `install` di atas menyiapkan direktori evidence `storage` pada host
+Linux. Perintah ini tidak diperlukan pada Docker Desktop untuk macOS jika file
+sharing sudah memberikan akses tulis ke direktori proyek.
 
 Image lokal memakai wheel PyTorch CPU agar Mac M1 tidak mengunduh library CUDA
 yang tidak dapat dipakai. Untuk server NVIDIA, atur `TORCH_INDEX_URL` ke index
@@ -18,8 +29,16 @@ Compose menunggu PostgreSQL sehat, menjalankan `alembic upgrade head`, lalu
 menyalakan API dan dashboard. URL yang tersedia:
 
 - API dan Swagger: `http://localhost:8000/docs`
-- Health check: `http://localhost:8000/api/v1/health`
+- Liveness: `http://localhost:8000/api/v1/health/live`
+- Readiness (termasuk koneksi database): `http://localhost:8000/api/v1/health/ready`
+- Health check lengkap (kompatibilitas): `http://localhost:8000/api/v1/health`
 - Dashboard: `http://localhost:5173`
+
+Pada production, `LOG_FORMAT=auto` menghasilkan log JSON terstruktur; pada
+terminal development log tetap mudah dibaca. Setiap request memiliki correlation
+ID untuk penelusuran. Pembatas login menggunakan state in-memory dan hanya akurat
+untuk satu instance API; deployment multi-instance memerlukan limiter bersama
+seperti Redis.
 
 Saat database masih kosong, API membuat akun awal dari `API_ADMIN_USERNAME` dan
 `API_ADMIN_PASSWORD`. Akun ini memiliki role `SUPER_ADMIN`. Nilai password hanya
