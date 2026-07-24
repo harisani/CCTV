@@ -61,6 +61,7 @@ class CameraRuntimeManager:
         jpeg_encoder: JpegEncoder | None = None,
         pipeline_factory: PipelineFactory | None = None,
         live_visibility: LiveVisibilityService | None = None,
+        health_alert_service: Any | None = None,
     ) -> None:
         self._settings = settings
         self._catalog = catalog
@@ -69,6 +70,7 @@ class CameraRuntimeManager:
         self._jpeg_encoder = jpeg_encoder or self._encode_jpeg
         self._pipeline_factory = pipeline_factory
         self._live_visibility = live_visibility or LiveVisibilityService()
+        self._health_alert_service = health_alert_service
         self._runtimes: dict[UUID, _CameraRuntime] = {}
         self._task: asyncio.Task[None] | None = None
         self._stop_event = asyncio.Event()
@@ -427,6 +429,16 @@ class CameraRuntimeManager:
             )
             runtime.reported_status = status
             runtime.last_health_at = now
+            if (
+                self._health_alert_service is not None
+                and previous_status != status
+            ):
+                await self._health_alert_service.camera_health_changed(
+                    runtime.camera_id,
+                    status=status,
+                    occurred_at=datetime.now(UTC),
+                    reason=last_error,
+                )
             if (
                 previous_status == "ONLINE"
                 and status != "ONLINE"

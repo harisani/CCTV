@@ -353,6 +353,60 @@ GET /api/v1/occupancy/sessions
 GET /api/v1/occupancy/facts
 ```
 
+## Phase 10: Policy engine dan security alerts
+
+`POLICY_EVALUATION` sekarang menjadi tahap terakhir durable AI queue setelah
+`OCCUPANCY_UPDATE`. Evaluator membaca occupancy fact, identity decision,
+multi-camera correlation, zona, status kamera, profil subjek opsional, dan
+observasi APD. Satu occupancy fact hanya memiliki satu policy evaluation;
+deduplication key mencegah retry menghasilkan alert ganda.
+
+Aturan tersedia:
+
+- otorisasi person/external subject per zona;
+- izin departemen;
+- warna APD;
+- kelengkapan APD;
+- restricted/critical zone;
+- unknown/unresolved person;
+- identity conflict;
+- kamera offline;
+- processing delay.
+
+Prinsip fail-safe APD: item hanya dinyatakan melanggar bila model menghasilkan
+observation `MISSING` secara eksplisit. Model tidak tersedia, hasil parsial,
+atau item tidak terlihat menghasilkan `INCONCLUSIVE`, bukan pelanggaran palsu.
+Impossible travel dan ambiguous journey menjadi alert bawaan. Kegagalan job AI
+yang sudah terminal juga menghasilkan `CAPTURE_FAILURE`. Outage kamera membuat
+satu alert aktif per insiden dan otomatis menutupnya ketika stream pulih.
+
+Workflow alert:
+
+```text
+OPEN → ACKNOWLEDGED → RESOLVED
+  └────────────────→ DISMISSED
+```
+
+Review hanya tersedia bagi `SUPER_ADMIN`, `ADMIN`, `SUPERVISOR`, dan
+`OPERATOR`; konfigurasi rule/profile hanya bagi admin. Setiap perubahan
+tercatat di audit log.
+
+Endpoint JWT:
+
+```text
+GET|POST /api/v1/policies/rules
+GET|POST /api/v1/policies/profiles
+GET      /api/v1/policies/alerts
+POST     /api/v1/policies/alerts/{alert_id}/review
+GET      /api/v1/policies/evaluations
+```
+
+Processing delay default dikonfigurasi dari `.env`:
+
+```dotenv
+POLICY_PROCESSING_DELAY_SECONDS=120
+```
+
 ## Disaster Recovery penuh
 
 Backup observasional di atas tetap dipertahankan untuk pencarian histori. Untuk

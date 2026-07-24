@@ -9,7 +9,7 @@ import socket
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -22,21 +22,29 @@ from app.ai import (
 )
 from app.models import (
     AIJobType,
+    AIJobStatus,
+    AuditLog,
     AIProcessingJob,
     CaptureEvent,
     CaptureEventStatus,
     EvidenceAsset,
+    SecurityAlert,
+    SecurityAlertSeverity,
+    SecurityAlertStatus,
+    SecurityAlertType,
 )
 from app.repository import AIJobRepository, BiometricRepository
 from app.repository import BodyAnalysisRepository
 from app.repository import JourneyRepository
 from app.repository import OccupancyRepository
+from app.repository import PolicyRepository
 from app.services.biometric_identity_service import BiometricIdentityService
 from app.services.body_analysis_service import BodyAnalysisService
 from app.services.journey_correlation_service import (
     JourneyCorrelationService,
 )
 from app.services.occupancy_service import OccupancyService
+from app.services.policy_service import PolicyService
 
 
 class RetryableJobError(RuntimeError):
@@ -340,6 +348,38 @@ class OccupancyUpdateHandler:
                 if result.needs_review
                 else CaptureEventStatus.COMPLETED
             ),
+            next_job_type=AIJobType.POLICY_EVALUATION,
+            next_payload={"capture_event_id": str(job.capture_event_id)},
+        )
+
+
+class PolicyEvaluationHandler:
+    def __init__(self, session_factory: Any, settings: Any) -> None:
+        self._session_factory = session_factory
+        self._settings = settings
+
+    async def handle(self, job: AIProcessingJob) -> HandlerResult:
+        try:
+            async with self._session_factory() as session:
+                result = await PolicyService(
+                    PolicyRepository(session), self._settings
+                ).evaluate_capture(job.capture_event_id)
+        except (LookupError, ValueError) as error:
+            raise PermanentJobError(str(error)) from error
+        return HandlerResult(
+            result={
+                "stage": "POLICY_EVALUATION",
+                "policy_evaluation_id": str(result.evaluation.id),
+                "status": result.evaluation.status.value,
+                "alert_count": result.evaluation.alert_count,
+                "alert_ids": [str(item.id) for item in result.alerts],
+                "needs_review": result.needs_review,
+            },
+            capture_status=(
+                CaptureEventStatus.NEED_REVIEW
+                if result.needs_review
+                else CaptureEventStatus.COMPLETED
+            ),
         )
 
 
@@ -367,6 +407,9 @@ class AIJobHandlerRegistry:
                 session_factory, settings
             ),
             AIJobType.OCCUPANCY_UPDATE: OccupancyUpdateHandler(
+                session_factory, settings
+            ),
+            AIJobType.POLICY_EVALUATION: PolicyEvaluationHandler(
                 session_factory, settings
             ),
         }
@@ -628,6 +671,54 @@ class AIProcessingWorker:
                 retryable=retryable,
                 now=datetime.now(UTC),
             )
+            if status == AIJobStatus.FAILED:
+                policy_repository = PolicyRepository(session)
+                deduplication_key = (
+                    f"capture-failure:{job.capture_event_id}:"
+                    f"{job.job_type.value}"
+                )
+                if (
+                    await policy_repository.alert_by_key(deduplication_key)
+                    is None
+                ):
+                    capture = await session.get(
+                        CaptureEvent, job.capture_event_id
+                    )
+                    alert = SecurityAlert(
+                        id=uuid4(),
+                        deduplication_key=deduplication_key,
+                        alert_type=SecurityAlertType.CAPTURE_FAILURE,
+                        severity=SecurityAlertSeverity.HIGH,
+                        status=SecurityAlertStatus.OPEN,
+                        camera_id=capture.camera_id if capture else None,
+                        capture_event_id=job.capture_event_id,
+                        title="AI capture processing failed",
+                        description=(
+                            f"{job.job_type.value} failed permanently."
+                        ),
+                        evidence={
+                            "job_id": str(job.id),
+                            "job_type": job.job_type.value,
+                            "error_code": type(error).__name__.upper(),
+                            "attempt_count": job.attempt_count,
+                        },
+                        occurred_at=(
+                            capture.captured_at
+                            if capture is not None
+                            else datetime.now(UTC)
+                        ),
+                    )
+                    policy_repository.add(alert)
+                    policy_repository.add(AuditLog(
+                        actor_user_id=None,
+                        action="CAPTURE_FAILURE_ALERT_CREATED",
+                        resource_type="security_alert",
+                        resource_id=str(alert.id),
+                        details={
+                            "capture_event_id": str(job.capture_event_id),
+                            "job_type": job.job_type.value,
+                        },
+                    ))
             await repository.commit()
         self._logger.warning(
             "AI job failed job_id=%s status=%s attempt=%s retryable=%s",

@@ -45,10 +45,14 @@ from app.models import (
     ModelVersion,
     OccupancyFact,
     OccupancySession,
+    PolicyEvaluation,
+    PolicyRule,
     Person,
     PPEAnalysis,
     PresenceSession,
     Snapshot,
+    SecurityAlert,
+    SubjectPolicyProfile,
     Tracking,
     User,
     VirtualLine,
@@ -59,7 +63,7 @@ from app.models import (
 from app.repository import AuditRepository, BackupRepository
 
 ARCHIVE_FORMAT = "cctv-people-flow-observational-backup"
-ARCHIVE_SCHEMA_VERSION = 10
+ARCHIVE_SCHEMA_VERSION = 11
 ARCHIVE_ENTITIES_V1 = frozenset(
     {"cameras", "persons", "trackings", "events", "snapshots", "users", "audit_logs"}
 )
@@ -94,9 +98,13 @@ ARCHIVE_ENTITIES_V9 = ARCHIVE_ENTITIES_V8 | {
     "journey_events",
     "journey_correlations",
 }
-ARCHIVE_ENTITIES = ARCHIVE_ENTITIES_V9 | {
+ARCHIVE_ENTITIES_V10 = ARCHIVE_ENTITIES_V9 | {
     "occupancy_facts",
     "occupancy_sessions",
+}
+ARCHIVE_ENTITIES = ARCHIVE_ENTITIES_V10 | {
+    "subject_policy_profiles", "policy_rules",
+    "policy_evaluations", "security_alerts",
 }
 _backup_lock = asyncio.Lock()
 
@@ -320,7 +328,8 @@ class ArchiveCodec:
             7: ARCHIVE_ENTITIES_V7,
             8: ARCHIVE_ENTITIES_V8,
             9: ARCHIVE_ENTITIES_V9,
-            10: ARCHIVE_ENTITIES,
+            10: ARCHIVE_ENTITIES_V10,
+            11: ARCHIVE_ENTITIES,
         }[schema_version]
         for entity in required_entities:
             member = f"data/{entity}.jsonl"
@@ -865,6 +874,28 @@ class BackupService:
                 )
             ).all()
         )
+        subject_policy_profiles = list(
+            (await session.scalars(select(SubjectPolicyProfile))).all()
+        )
+        policy_rules = list(
+            (await session.scalars(select(PolicyRule))).all()
+        )
+        policy_evaluations = list(
+            (await session.scalars(
+                select(PolicyEvaluation).where(
+                    PolicyEvaluation.evaluated_at >= start_at,
+                    PolicyEvaluation.evaluated_at < end_at,
+                )
+            )).all()
+        )
+        security_alerts = list(
+            (await session.scalars(
+                select(SecurityAlert).where(
+                    SecurityAlert.occurred_at >= start_at,
+                    SecurityAlert.occurred_at < end_at,
+                )
+            )).all()
+        )
         biometric_templates = list(
             (
                 await session.scalars(
@@ -1048,6 +1079,16 @@ class BackupService:
             ],
             "occupancy_sessions": [
                 _model_record(item) for item in occupancy_sessions
+            ],
+            "subject_policy_profiles": [
+                _model_record(item) for item in subject_policy_profiles
+            ],
+            "policy_rules": [_model_record(item) for item in policy_rules],
+            "policy_evaluations": [
+                _model_record(item) for item in policy_evaluations
+            ],
+            "security_alerts": [
+                _model_record(item) for item in security_alerts
             ],
             "zone_events": [_model_record(item) for item in zone_events],
             "presence_sessions": [_model_record(item) for item in presence_sessions],

@@ -20,6 +20,7 @@ from app.services.disaster_recovery_scheduler import DisasterRecoveryScheduler
 from app.services.realtime_pipeline import RealtimePipelineFactory
 from app.services.reid_retention_service import ReIdRetentionService
 from app.services.presence_reconciliation_scheduler import PresenceReconciliationScheduler
+from app.services.policy_service import OperationalSecurityAlertService
 from app.services.container import get_service_container
 
 
@@ -75,6 +76,7 @@ async def lifespan(application: FastAPI):
             dashboard_hub,
             pipeline_factory=pipeline_factory.create if pipeline_factory else None,
             live_visibility=services.live_visibility,
+            health_alert_service=OperationalSecurityAlertService(SessionLocal),
         )
         await camera_runtime.start()
     try:

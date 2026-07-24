@@ -16,6 +16,7 @@ from app.repository import (
     EventRepository,
     JourneyRepository,
     OccupancyRepository,
+    PolicyRepository,
     PersonRepository,
     SnapshotRepository,
     StatisticsRepository,
@@ -33,6 +34,7 @@ from app.services.journey_correlation_service import (
     JourneyCorrelationService,
 )
 from app.services.occupancy_service import OccupancyService
+from app.services.policy_service import PolicyService
 from app.services.login_rate_limiter import LoginRateLimiter
 from app.services.topology_service import TopologyService
 from app.services.zone_transition_service import ZoneTransitionService
@@ -147,6 +149,13 @@ async def get_occupancy_service(
 ) -> AsyncGenerator[OccupancyService, None]:
     """Provide Phase 9 occupancy reconstruction and queries."""
     yield OccupancyService(OccupancyRepository(session), settings)
+
+
+async def get_policy_service(
+    settings: Settings = Depends(get_app_settings),
+    session: AsyncSession = Depends(get_database_session),
+) -> AsyncGenerator[PolicyService, None]:
+    yield PolicyService(PolicyRepository(session), settings)
 
 
 async def get_zone_transition_service(

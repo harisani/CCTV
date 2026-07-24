@@ -7,6 +7,7 @@ from app.repository.biometric_repository import BiometricRepository
 from app.repository.body_analysis_repository import BodyAnalysisRepository
 from app.repository.journey_repository import JourneyRepository
 from app.repository.occupancy_repository import OccupancyRepository
+from app.repository.policy_repository import PolicyRepository
 from app.repository.camera_repository import CameraRepository
 from app.repository.capture_evidence_repository import CaptureEvidenceRepository
 from app.repository.camera_runtime_repository import CameraRuntimeRepository
@@ -30,6 +31,7 @@ __all__ = [
     "BodyAnalysisRepository",
     "JourneyRepository",
     "OccupancyRepository",
+    "PolicyRepository",
     "CameraRepository",
     "CaptureEvidenceRepository",
     "CameraRuntimeRepository",

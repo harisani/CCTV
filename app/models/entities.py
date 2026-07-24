@@ -157,6 +157,55 @@ class OccupancyFactType(StrEnum):
     OBSERVATION = "OBSERVATION"
 
 
+class PolicyRuleType(StrEnum):
+    ZONE_AUTHORIZATION = "ZONE_AUTHORIZATION"
+    DIVISION_PERMISSION = "DIVISION_PERMISSION"
+    PPE_COLOR = "PPE_COLOR"
+    PPE_COMPLETENESS = "PPE_COMPLETENESS"
+    RESTRICTED_ZONE = "RESTRICTED_ZONE"
+    UNKNOWN_PERSON = "UNKNOWN_PERSON"
+    UNRESOLVED_PERSON = "UNRESOLVED_PERSON"
+    CAMERA_OFFLINE = "CAMERA_OFFLINE"
+    PROCESSING_DELAY = "PROCESSING_DELAY"
+    IDENTITY_CONFLICT = "IDENTITY_CONFLICT"
+
+
+class SecurityAlertType(StrEnum):
+    UNKNOWN_ENTER = "UNKNOWN_ENTER"
+    UNKNOWN_ACTIVE = "UNKNOWN_ACTIVE"
+    UNRESOLVED_IDENTITY = "UNRESOLVED_IDENTITY"
+    UNAUTHORIZED_ZONE_ENTRY = "UNAUTHORIZED_ZONE_ENTRY"
+    PPE_MISMATCH = "PPE_MISMATCH"
+    PPE_INCOMPLETE = "PPE_INCOMPLETE"
+    IDENTITY_CONFLICT = "IDENTITY_CONFLICT"
+    IMPOSSIBLE_TRAVEL = "IMPOSSIBLE_TRAVEL"
+    CAMERA_OFFLINE = "CAMERA_OFFLINE"
+    PROCESSING_BACKLOG = "PROCESSING_BACKLOG"
+    CAPTURE_FAILURE = "CAPTURE_FAILURE"
+    DUPLICATE_JOURNEY = "DUPLICATE_JOURNEY"
+    MANUAL_CORRECTION = "MANUAL_CORRECTION"
+
+
+class SecurityAlertSeverity(StrEnum):
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+    CRITICAL = "CRITICAL"
+
+
+class SecurityAlertStatus(StrEnum):
+    OPEN = "OPEN"
+    ACKNOWLEDGED = "ACKNOWLEDGED"
+    RESOLVED = "RESOLVED"
+    DISMISSED = "DISMISSED"
+
+
+class PolicyEvaluationStatus(StrEnum):
+    COMPLETED = "COMPLETED"
+    INCONCLUSIVE = "INCONCLUSIVE"
+    FAILED = "FAILED"
+
+
 class PresenceStatus(StrEnum):
     ACTIVE = "ACTIVE"
     UNCERTAIN = "UNCERTAIN"
@@ -1270,6 +1319,166 @@ class OccupancySession(Base):
         DateTime(timezone=True),
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
+    )
+
+
+class SubjectPolicyProfile(Base):
+    """Optional HR context without making access-lock a primary source."""
+
+    __tablename__ = "subject_policy_profiles"
+    __table_args__ = (
+        CheckConstraint(
+            "person_id IS NOT NULL OR external_subject_key IS NOT NULL",
+            name="ck_subject_policy_profile_subject",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    person_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("persons.id", ondelete="CASCADE"),
+        unique=True,
+        index=True,
+    )
+    external_subject_key: Mapped[str | None] = mapped_column(
+        String(160), unique=True, index=True
+    )
+    employee_key: Mapped[str | None] = mapped_column(
+        String(100), index=True
+    )
+    department_code: Mapped[str | None] = mapped_column(
+        String(100), index=True
+    )
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    profile_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
+
+class PolicyRule(Base):
+    __tablename__ = "policy_rules"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    name: Mapped[str] = mapped_column(String(160), unique=True, index=True)
+    rule_type: Mapped[PolicyRuleType] = mapped_column(
+        Enum(PolicyRuleType, name="policy_rule_type"), index=True
+    )
+    zone_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("zones.id", ondelete="CASCADE"), index=True
+    )
+    severity: Mapped[SecurityAlertSeverity] = mapped_column(
+        Enum(SecurityAlertSeverity, name="security_alert_severity")
+    )
+    priority: Mapped[int] = mapped_column(Integer, default=100, index=True)
+    configuration: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_by_user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
+
+class SecurityAlert(Base):
+    __tablename__ = "security_alerts"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    deduplication_key: Mapped[str] = mapped_column(
+        String(240), unique=True, index=True
+    )
+    alert_type: Mapped[SecurityAlertType] = mapped_column(
+        Enum(SecurityAlertType, name="security_alert_type"), index=True
+    )
+    severity: Mapped[SecurityAlertSeverity] = mapped_column(
+        Enum(SecurityAlertSeverity, name="security_alert_severity"),
+        index=True,
+    )
+    status: Mapped[SecurityAlertStatus] = mapped_column(
+        Enum(SecurityAlertStatus, name="security_alert_status"), index=True
+    )
+    policy_rule_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("policy_rules.id", ondelete="SET NULL"), index=True
+    )
+    zone_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("zones.id", ondelete="SET NULL"), index=True
+    )
+    camera_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("cameras.id", ondelete="SET NULL"), index=True
+    )
+    journey_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("global_journeys.id", ondelete="SET NULL"), index=True
+    )
+    occupancy_session_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("occupancy_sessions.id", ondelete="SET NULL"), index=True
+    )
+    capture_event_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("capture_events.id", ondelete="SET NULL"), index=True
+    )
+    person_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("persons.id", ondelete="SET NULL"), index=True
+    )
+    external_subject_key: Mapped[str | None] = mapped_column(
+        String(160), index=True
+    )
+    title: Mapped[str] = mapped_column(String(200))
+    description: Mapped[str] = mapped_column(Text)
+    evidence: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, index=True
+    )
+    acknowledged_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    reviewed_by_user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    resolution_note: Mapped[str | None] = mapped_column(Text)
+
+
+class PolicyEvaluation(Base):
+    __tablename__ = "policy_evaluations"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    idempotency_key: Mapped[str] = mapped_column(
+        String(200), unique=True, index=True
+    )
+    occupancy_fact_id: Mapped[UUID] = mapped_column(
+        ForeignKey("occupancy_facts.id", ondelete="CASCADE"),
+        unique=True,
+        index=True,
+    )
+    capture_event_id: Mapped[UUID] = mapped_column(
+        ForeignKey("capture_events.id", ondelete="RESTRICT"), index=True
+    )
+    status: Mapped[PolicyEvaluationStatus] = mapped_column(
+        Enum(PolicyEvaluationStatus, name="policy_evaluation_status"),
+        index=True,
+    )
+    evaluated_rule_count: Mapped[int] = mapped_column(Integer)
+    alert_count: Mapped[int] = mapped_column(Integer)
+    decisions: Mapped[list[dict[str, Any]]] = mapped_column(JSONB)
+    evaluated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow
     )
 
 

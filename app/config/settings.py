@@ -209,6 +209,9 @@ class Settings(BaseSettings):
     ai_queue_backlog_warning_threshold: int = Field(
         default=100, ge=1, le=1_000_000
     )
+    policy_processing_delay_seconds: float = Field(
+        default=120.0, ge=1, le=86_400
+    )
     biometric_yunet_model_path: Path = Path(
         "models/face_detection_yunet_2023mar.onnx"
     )

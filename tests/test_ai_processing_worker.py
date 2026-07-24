@@ -9,6 +9,7 @@ from app.models import (
     AIJobType,
     AIProcessingJob,
     ProcessingPriority,
+    SecurityAlert,
 )
 from app.services.ai_processing_worker import (
     AIProcessingWorker,
@@ -45,6 +46,7 @@ class QueueState:
         self.recovered = (0, 0)
         self.capture = None
         self.enqueued = None
+        self.security_alerts = []
 
 
 class FakeSession:
@@ -98,6 +100,25 @@ class FakeRepository:
 
     async def commit(self):
         return None
+
+
+class FakePolicyRepository:
+    def __init__(self, session):
+        self.state = session.state
+
+    async def alert_by_key(self, key):
+        return next(
+            (
+                item
+                for item in self.state.security_alerts
+                if item.deduplication_key == key
+            ),
+            None,
+        )
+
+    def add(self, entity):
+        if isinstance(entity, SecurityAlert):
+            self.state.security_alerts.append(entity)
 
 
 class SuccessHandler:
@@ -167,6 +188,9 @@ async def test_worker_completes_claimed_job_and_publishes_status():
     with patch(
         "app.services.ai_processing_worker.AIJobRepository",
         FakeRepository,
+    ), patch(
+        "app.services.ai_processing_worker.PolicyRepository",
+        FakePolicyRepository,
     ):
         processed = await worker.process_one()
 
@@ -189,6 +213,9 @@ async def test_worker_marks_permanent_failure_without_retry():
     with patch(
         "app.services.ai_processing_worker.AIJobRepository",
         FakeRepository,
+    ), patch(
+        "app.services.ai_processing_worker.PolicyRepository",
+        FakePolicyRepository,
     ):
         processed = await worker.process_one()
 
@@ -196,6 +223,8 @@ async def test_worker_marks_permanent_failure_without_retry():
     assert state.failed[0] == state.job.id
     assert state.failed[1]["retryable"] is False
     assert state.failed[1]["error_code"] == "PERMANENTJOBERROR"
+    assert len(state.security_alerts) == 1
+    assert state.security_alerts[0].alert_type.value == "CAPTURE_FAILURE"
 
 
 @pytest.mark.anyio

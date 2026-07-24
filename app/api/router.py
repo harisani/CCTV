@@ -20,6 +20,7 @@ from app.api.routes.biometrics import router as biometrics_router
 from app.api.routes.body_analysis import router as body_analysis_router
 from app.api.routes.journeys import router as journeys_router
 from app.api.routes.occupancy import router as occupancy_router
+from app.api.routes.policies import router as policies_router
 
 api_router = APIRouter()
 api_router.include_router(health_router, tags=["system"])
@@ -41,4 +42,5 @@ api_router.include_router(biometrics_router, tags=["biometrics"])
 api_router.include_router(body_analysis_router, tags=["body-analysis"])
 api_router.include_router(journeys_router, tags=["global-journeys"])
 api_router.include_router(occupancy_router, tags=["occupancy"])
+api_router.include_router(policies_router, tags=["policies", "security-alerts"])
 api_router.websocket("/ws/dashboard")(dashboard_websocket)
