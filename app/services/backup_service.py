@@ -38,7 +38,10 @@ from app.models import (
     EvidenceAsset,
     Event,
     FaceCandidate,
+    GlobalJourney,
     IdentityMatch,
+    JourneyCorrelation,
+    JourneyEvent,
     ModelVersion,
     Person,
     PPEAnalysis,
@@ -54,7 +57,7 @@ from app.models import (
 from app.repository import AuditRepository, BackupRepository
 
 ARCHIVE_FORMAT = "cctv-people-flow-observational-backup"
-ARCHIVE_SCHEMA_VERSION = 8
+ARCHIVE_SCHEMA_VERSION = 9
 ARCHIVE_ENTITIES_V1 = frozenset(
     {"cameras", "persons", "trackings", "events", "snapshots", "users", "audit_logs"}
 )
@@ -79,10 +82,15 @@ ARCHIVE_ENTITIES_V7 = ARCHIVE_ENTITIES_V6 | {
     "biometric_templates",
     "identity_matches",
 }
-ARCHIVE_ENTITIES = ARCHIVE_ENTITIES_V7 | {
+ARCHIVE_ENTITIES_V8 = ARCHIVE_ENTITIES_V7 | {
     "body_candidates",
     "body_embeddings",
     "ppe_analyses",
+}
+ARCHIVE_ENTITIES = ARCHIVE_ENTITIES_V8 | {
+    "global_journeys",
+    "journey_events",
+    "journey_correlations",
 }
 _backup_lock = asyncio.Lock()
 
@@ -304,7 +312,8 @@ class ArchiveCodec:
             5: ARCHIVE_ENTITIES_V5,
             6: ARCHIVE_ENTITIES_V6,
             7: ARCHIVE_ENTITIES_V7,
-            8: ARCHIVE_ENTITIES,
+            8: ARCHIVE_ENTITIES_V8,
+            9: ARCHIVE_ENTITIES,
         }[schema_version]
         for entity in required_entities:
             member = f"data/{entity}.jsonl"
@@ -785,6 +794,45 @@ class BackupService:
                 )
             ).all()
         )
+        journey_events = list(
+            (
+                await session.scalars(
+                    select(JourneyEvent)
+                    .where(
+                        JourneyEvent.occurred_at >= start_at,
+                        JourneyEvent.occurred_at < end_at,
+                    )
+                    .order_by(JourneyEvent.occurred_at)
+                )
+            ).all()
+        )
+        journey_ids = {item.journey_id for item in journey_events}
+        global_journeys = (
+            list(
+                (
+                    await session.scalars(
+                        select(GlobalJourney)
+                        .where(GlobalJourney.id.in_(journey_ids))
+                        .order_by(GlobalJourney.first_seen_at)
+                    )
+                ).all()
+            )
+            if journey_ids
+            else []
+        )
+        journey_correlations = list(
+            (
+                await session.scalars(
+                    select(JourneyCorrelation)
+                    .where(
+                        JourneyCorrelation.journey_event_id.in_(
+                            {item.id for item in journey_events}
+                        )
+                    )
+                    .order_by(JourneyCorrelation.correlated_at)
+                )
+            ).all()
+        )
         biometric_templates = list(
             (
                 await session.scalars(
@@ -953,6 +1001,15 @@ class BackupService:
             ],
             "ppe_analyses": [
                 _model_record(item) for item in ppe_analyses
+            ],
+            "global_journeys": [
+                _model_record(item) for item in global_journeys
+            ],
+            "journey_events": [
+                _model_record(item) for item in journey_events
+            ],
+            "journey_correlations": [
+                _model_record(item) for item in journey_correlations
             ],
             "zone_events": [_model_record(item) for item in zone_events],
             "presence_sessions": [_model_record(item) for item in presence_sessions],

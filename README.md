@@ -74,6 +74,9 @@ scrypt di PostgreSQL, bukan kembali ke `.env`.
   queue. A body-only similarity is never promoted directly to `CONFIRMED`;
   custom APD weights are checksum-verified and an absent model is reported as
   `MODEL_UNAVAILABLE`, not interpreted as missing equipment.
+- Phase 8 correlates captures by event time into auditable global journeys.
+  Identity conflicts and physically impossible routes never merge; ambiguous
+  observations become separate journeys requiring review.
 - Snapshot list responses expose stable snapshot/event IDs, bounding boxes, and
   timestamps only. Server filesystem paths for images and metadata remain
   internal persistence details and are never part of the public API contract.
@@ -114,8 +117,9 @@ storage/backups/YYYY/MM/YYYYMMDD_<uuid>.zip
 ```
 
 ZIP memuat `manifest.json`, dataset JSON Lines, snapshot lama, capture event,
-evidence asset, kandidat wajah/periocular/full-body, observasi APD, dan hasil
-identity matching. Embedding referensi tidak dimasukkan ke backup
+evidence asset, kandidat wajah/periocular/full-body, observasi APD, hasil
+identity matching, global journey, journey event, dan correlation evidence.
+Embedding referensi tidak dimasukkan ke backup
 observasional; embedding tetap tersedia dalam backup DR terenkripsi. Setiap
 member memiliki checksum SHA-256. File dibuat secara atomik;
 job yang terputus akibat restart ditandai `FAILED` saat startup dan dapat dibuat
@@ -242,6 +246,61 @@ GET /api/v1/body-analysis/ppe
 
 Seluruh endpoint mendukung pagination dan filter yang relevan. Response
 embedding hanya berisi metadata, bukan nilai vector sensitif.
+
+## Phase 8: Global journey dan korelasi multi-camera
+
+Setelah `PPE_ANALYSIS`, queue menjalankan `JOURNEY_CORRELATION`. Satu local
+ByteTrack ID tetap hanya berlaku di satu kamera, sedangkan global journey
+menyusun capture dari beberapa kamera:
+
+```text
+CAM-01 / local track 441
+CAM-02 / local track 883
+CAM-05 / local track 109
+→ J-7F31A95E4C20
+```
+
+Correlation menggunakan kombinasi identity decision, body similarity, warna
+dominan APD sebagai sinyal lemah, camera/zone topology, arah waktu, dan batas
+minimum/maksimum perjalanan. Pemrosesan memakai `captured_at`, bukan waktu job,
+sehingga urutan API selalu berdasarkan event time walaupun job kamera selesai
+tidak bersamaan.
+
+Aturan fail-safe:
+
+- identity berbeda tidak pernah digabung;
+- zona non-adjacent atau travel time di luar konfigurasi menghasilkan
+  `IMPOSSIBLE_TRAVEL` dan journey terpisah;
+- dua kandidat dengan skor terlalu dekat menghasilkan `AMBIGUOUS`;
+- unknown hanya dapat digabung dengan threshold lebih tinggi dan body evidence
+  kuat;
+- retry capture yang sama mengembalikan correlation yang sama.
+
+`IMPOSSIBLE_TRAVEL` pada Phase 8 adalah observation fact. Security alert baru
+dibuat oleh Policy Engine pada Phase 10. Konfigurasi utama:
+
+```dotenv
+JOURNEY_MATCH_THRESHOLD=0.72
+JOURNEY_UNKNOWN_MATCH_THRESHOLD=0.82
+JOURNEY_AMBIGUITY_MARGIN=0.08
+JOURNEY_MAX_GAP_SECONDS=900
+JOURNEY_MIN_BODY_SIMILARITY=0.65
+```
+
+Endpoint JWT:
+
+```text
+GET /api/v1/global-journeys
+GET /api/v1/global-journeys/configuration
+GET /api/v1/global-journeys/correlations
+GET /api/v1/global-journeys/{journey_id}
+GET /api/v1/global-journeys/{journey_id}/events
+```
+
+Correlation decision diserialisasi singkat dengan PostgreSQL advisory lock.
+Lock hanya mencakup event crossing, bukan frame/video inference, dan candidate
+anchor diambil secara batch agar keputusan concurrent tidak membuat duplicate
+journey.
 
 ## Disaster Recovery penuh
 

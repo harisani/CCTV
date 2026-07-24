@@ -14,6 +14,7 @@ from app.repository import (
     CaptureEvidenceRepository,
     DisasterRecoveryRepository,
     EventRepository,
+    JourneyRepository,
     PersonRepository,
     SnapshotRepository,
     StatisticsRepository,
@@ -27,6 +28,9 @@ from app.services.health_service import HealthService
 from app.services.capture_evidence_service import CaptureEvidenceService
 from app.services.biometric_identity_service import BiometricIdentityService
 from app.services.body_analysis_service import BodyAnalysisService
+from app.services.journey_correlation_service import (
+    JourneyCorrelationService,
+)
 from app.services.login_rate_limiter import LoginRateLimiter
 from app.services.topology_service import TopologyService
 from app.services.zone_transition_service import ZoneTransitionService
@@ -125,6 +129,14 @@ async def get_body_analysis_service(
 ) -> AsyncGenerator[BodyAnalysisService, None]:
     """Provide body ReID and PPE observation use cases."""
     yield BodyAnalysisService(BodyAnalysisRepository(session), settings)
+
+
+async def get_journey_correlation_service(
+    settings: Settings = Depends(get_app_settings),
+    session: AsyncSession = Depends(get_database_session),
+) -> AsyncGenerator[JourneyCorrelationService, None]:
+    """Provide global journey correlation and observation queries."""
+    yield JourneyCorrelationService(JourneyRepository(session), settings)
 
 
 async def get_zone_transition_service(

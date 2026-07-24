@@ -117,6 +117,24 @@ class PPEAnalysisStatus(StrEnum):
     FAILED = "FAILED"
 
 
+class JourneyStatus(StrEnum):
+    ACTIVE = "ACTIVE"
+    NEED_REVIEW = "NEED_REVIEW"
+    CLOSED = "CLOSED"
+
+
+class JourneyEventType(StrEnum):
+    OBSERVATION = "OBSERVATION"
+    ZONE_TRANSITION = "ZONE_TRANSITION"
+
+
+class JourneyCorrelationDecision(StrEnum):
+    CREATED = "CREATED"
+    MATCHED = "MATCHED"
+    AMBIGUOUS = "AMBIGUOUS"
+    IMPOSSIBLE_TRAVEL = "IMPOSSIBLE_TRAVEL"
+
+
 class PresenceStatus(StrEnum):
     ACTIVE = "ACTIVE"
     UNCERTAIN = "UNCERTAIN"
@@ -903,6 +921,186 @@ class IdentityMatch(Base):
         ForeignKey("users.id", ondelete="SET NULL")
     )
     review_note: Mapped[str | None] = mapped_column(Text)
+
+
+class GlobalJourney(Base):
+    """Event-time global identity path assembled from local observations."""
+
+    __tablename__ = "global_journeys"
+    __table_args__ = (
+        CheckConstraint(
+            "last_seen_at >= first_seen_at",
+            name="ck_global_journey_time_order",
+        ),
+        CheckConstraint(
+            "identity_confidence BETWEEN 0 AND 1",
+            name="ck_global_journey_identity_confidence",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    journey_key: Mapped[str] = mapped_column(
+        String(40), unique=True, index=True
+    )
+    identity_person_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("persons.id", ondelete="SET NULL"), index=True
+    )
+    identity_external_subject_key: Mapped[str | None] = mapped_column(
+        String(160), index=True
+    )
+    identity_decision: Mapped[IdentityDecision] = mapped_column(
+        Enum(IdentityDecision, name="identity_decision"), index=True
+    )
+    identity_confidence: Mapped[float] = mapped_column(Float, index=True)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
+    current_zone_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("zones.id", ondelete="SET NULL"), index=True
+    )
+    last_camera_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("cameras.id", ondelete="SET NULL"), index=True
+    )
+    last_event_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey(
+            "journey_events.id",
+            ondelete="SET NULL",
+            use_alter=True,
+            name="fk_global_journeys_last_event",
+        ),
+        unique=True,
+    )
+    status: Mapped[JourneyStatus] = mapped_column(
+        Enum(JourneyStatus, name="journey_status"), index=True
+    )
+    review_status: Mapped[IdentityReviewStatus] = mapped_column(
+        Enum(IdentityReviewStatus, name="identity_review_status"),
+        index=True,
+    )
+    event_count: Mapped[int] = mapped_column(Integer, default=0)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
+
+class JourneyEvent(Base):
+    """One immutable camera/zone observation assigned to a global journey."""
+
+    __tablename__ = "journey_events"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    idempotency_key: Mapped[str] = mapped_column(
+        String(200), unique=True, index=True
+    )
+    journey_id: Mapped[UUID] = mapped_column(
+        ForeignKey("global_journeys.id", ondelete="CASCADE"), index=True
+    )
+    capture_event_id: Mapped[UUID] = mapped_column(
+        ForeignKey("capture_events.id", ondelete="RESTRICT"),
+        unique=True,
+        index=True,
+    )
+    tracking_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("trackings.id", ondelete="SET NULL"), index=True
+    )
+    camera_id: Mapped[UUID] = mapped_column(
+        ForeignKey("cameras.id", ondelete="RESTRICT"), index=True
+    )
+    origin_zone_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("zones.id", ondelete="RESTRICT"), index=True
+    )
+    destination_zone_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("zones.id", ondelete="RESTRICT"), index=True
+    )
+    current_zone_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("zones.id", ondelete="RESTRICT"), index=True
+    )
+    event_type: Mapped[JourneyEventType] = mapped_column(
+        Enum(JourneyEventType, name="journey_event_type"), index=True
+    )
+    identity_person_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("persons.id", ondelete="SET NULL"), index=True
+    )
+    identity_external_subject_key: Mapped[str | None] = mapped_column(
+        String(160), index=True
+    )
+    identity_decision: Mapped[IdentityDecision] = mapped_column(
+        Enum(IdentityDecision, name="identity_decision"), index=True
+    )
+    identity_confidence: Mapped[float] = mapped_column(Float)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
+    evidence_metadata: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow
+    )
+
+
+class JourneyCorrelation(Base):
+    """Auditable multi-signal decision for exactly one capture."""
+
+    __tablename__ = "journey_correlations"
+    __table_args__ = (
+        CheckConstraint(
+            "correlation_score BETWEEN 0 AND 1",
+            name="ck_journey_correlation_score",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    idempotency_key: Mapped[str] = mapped_column(
+        String(200), unique=True, index=True
+    )
+    capture_event_id: Mapped[UUID] = mapped_column(
+        ForeignKey("capture_events.id", ondelete="RESTRICT"),
+        unique=True,
+        index=True,
+    )
+    journey_id: Mapped[UUID] = mapped_column(
+        ForeignKey("global_journeys.id", ondelete="CASCADE"), index=True
+    )
+    journey_event_id: Mapped[UUID] = mapped_column(
+        ForeignKey("journey_events.id", ondelete="CASCADE"),
+        unique=True,
+        index=True,
+    )
+    anchor_journey_event_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("journey_events.id", ondelete="SET NULL"), index=True
+    )
+    decision: Mapped[JourneyCorrelationDecision] = mapped_column(
+        Enum(
+            JourneyCorrelationDecision,
+            name="journey_correlation_decision",
+        ),
+        index=True,
+    )
+    correlation_score: Mapped[float] = mapped_column(Float, index=True)
+    second_best_score: Mapped[float | None] = mapped_column(Float)
+    identity_score: Mapped[float] = mapped_column(Float)
+    topology_score: Mapped[float] = mapped_column(Float)
+    time_score: Mapped[float] = mapped_column(Float)
+    appearance_score: Mapped[float] = mapped_column(Float)
+    candidate_count: Mapped[int] = mapped_column(Integer)
+    impossible_travel: Mapped[bool] = mapped_column(
+        Boolean, default=False, index=True
+    )
+    reasoning_metadata: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    correlated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow
+    )
 
 
 class Snapshot(Base):

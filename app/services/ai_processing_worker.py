@@ -29,8 +29,12 @@ from app.models import (
 )
 from app.repository import AIJobRepository, BiometricRepository
 from app.repository import BodyAnalysisRepository
+from app.repository import JourneyRepository
 from app.services.biometric_identity_service import BiometricIdentityService
 from app.services.body_analysis_service import BodyAnalysisService
+from app.services.journey_correlation_service import (
+    JourneyCorrelationService,
+)
 
 
 class RetryableJobError(RuntimeError):
@@ -259,6 +263,44 @@ class PPEAnalysisHandler:
                 if result.capture_needs_review
                 else CaptureEventStatus.COMPLETED
             ),
+            next_job_type=AIJobType.JOURNEY_CORRELATION,
+            next_payload={"capture_event_id": str(job.capture_event_id)},
+        )
+
+
+class JourneyCorrelationHandler:
+    def __init__(self, session_factory: Any, settings: Any) -> None:
+        self._session_factory = session_factory
+        self._settings = settings
+
+    async def handle(self, job: AIProcessingJob) -> HandlerResult:
+        try:
+            async with self._session_factory() as session:
+                service = JourneyCorrelationService(
+                    JourneyRepository(session),
+                    self._settings,
+                )
+                result = await service.correlate(job.capture_event_id)
+        except (LookupError, ValueError) as error:
+            raise PermanentJobError(str(error)) from error
+        correlation = result.correlation
+        return HandlerResult(
+            result={
+                "stage": "JOURNEY_CORRELATION",
+                "journey_id": str(result.journey.id),
+                "journey_key": result.journey.journey_key,
+                "journey_event_id": str(result.event.id),
+                "correlation_id": str(correlation.id),
+                "decision": correlation.decision.value,
+                "correlation_score": correlation.correlation_score,
+                "impossible_travel": correlation.impossible_travel,
+                "needs_review": result.needs_review,
+            },
+            capture_status=(
+                CaptureEventStatus.NEED_REVIEW
+                if result.needs_review
+                else CaptureEventStatus.COMPLETED
+            ),
         )
 
 
@@ -281,6 +323,9 @@ class AIJobHandlerRegistry:
             ),
             AIJobType.PPE_ANALYSIS: PPEAnalysisHandler(
                 session_factory, settings, body_engine
+            ),
+            AIJobType.JOURNEY_CORRELATION: JourneyCorrelationHandler(
+                session_factory, settings
             ),
         }
 

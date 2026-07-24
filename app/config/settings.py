@@ -107,6 +107,23 @@ class Settings(BaseSettings):
     ppe_color_analysis_enabled: bool = True
     ppe_color_min_saturation: int = Field(default=45, ge=0, le=255)
 
+    journey_match_threshold: float = Field(default=0.72, ge=0, le=1)
+    journey_unknown_match_threshold: float = Field(
+        default=0.82, ge=0, le=1
+    )
+    journey_ambiguity_margin: float = Field(default=0.08, ge=0, le=1)
+    journey_max_gap_seconds: float = Field(
+        default=900.0, gt=0, le=86400
+    )
+    journey_candidate_limit: int = Field(default=100, ge=2, le=1000)
+    journey_min_body_similarity: float = Field(
+        default=0.65, ge=-1, le=1
+    )
+    journey_missing_topology_score: float = Field(
+        default=0.35, ge=0, le=1
+    )
+    journey_clock_skew_seconds: float = Field(default=5.0, ge=0, le=300)
+
     jwt_secret: str = Field(repr=False)
     jwt_algorithm: str = "HS256"
     jwt_access_token_expire_minutes: int = Field(default=60, gt=0)
@@ -256,6 +273,11 @@ class Settings(BaseSettings):
             for key, value in class_map.items()
         ):
             raise ValueError("PPE_CLASS_MAP must map strings to strings")
+        if self.journey_unknown_match_threshold < self.journey_match_threshold:
+            raise ValueError(
+                "JOURNEY_UNKNOWN_MATCH_THRESHOLD must be greater than or "
+                "equal to JOURNEY_MATCH_THRESHOLD"
+            )
         if self.app_env != "production":
             return self
 

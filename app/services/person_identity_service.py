@@ -16,7 +16,12 @@ from app.models import (
     CaptureEvent,
     EvidenceAsset,
     Event,
+    GlobalJourney,
+    IdentityDecision,
     IdentityMatch,
+    IdentityReviewStatus,
+    JourneyEvent,
+    JourneyStatus,
     Person,
     PersonEmbedding,
     Tracking,
@@ -69,6 +74,20 @@ class PersonIdentityService:
             update(IdentityMatch)
             .where(IdentityMatch.candidate_person_id.in_(unique_sources))
             .values(candidate_person_id=target_id)
+        )
+        await self.session.execute(
+            update(GlobalJourney)
+            .where(
+                GlobalJourney.identity_person_id.in_(unique_sources)
+            )
+            .values(identity_person_id=target_id)
+        )
+        await self.session.execute(
+            update(JourneyEvent)
+            .where(
+                JourneyEvent.identity_person_id.in_(unique_sources)
+            )
+            .values(identity_person_id=target_id)
         )
         target.first_seen_at = min([target.first_seen_at, *(item.first_seen_at for item in sources)])
         target.last_seen_at = max([target.last_seen_at, *(item.last_seen_at for item in sources)])
@@ -213,6 +232,39 @@ class PersonIdentityService:
             )
             .values(candidate_person_id=new_person.id)
         )
+        moved_journey_events = int(
+            await self.session.scalar(
+                select(func.count(JourneyEvent.id)).where(
+                    JourneyEvent.capture_event_id.in_(
+                        selected_capture_ids
+                    ),
+                    JourneyEvent.identity_person_id == source_id,
+                )
+            )
+            or 0
+        )
+        affected_journey_ids = select(JourneyEvent.journey_id).where(
+            JourneyEvent.capture_event_id.in_(selected_capture_ids)
+        )
+        await self.session.execute(
+            update(JourneyEvent)
+            .where(
+                JourneyEvent.capture_event_id.in_(
+                    selected_capture_ids
+                ),
+                JourneyEvent.identity_person_id == source_id,
+            )
+            .values(identity_person_id=new_person.id)
+        )
+        await self.session.execute(
+            update(GlobalJourney)
+            .where(GlobalJourney.id.in_(affected_journey_ids))
+            .values(
+                identity_decision=IdentityDecision.CONFLICT,
+                status=JourneyStatus.NEED_REVIEW,
+                review_status=IdentityReviewStatus.PENDING,
+            )
+        )
         moved_reference_count = (
             moved_templates + moved_body_embeddings
             + moved_biometric_templates
@@ -236,6 +288,7 @@ class PersonIdentityService:
                         moved_biometric_templates
                     ),
                     "moved_identity_match_count": moved_identity_matches,
+                    "moved_journey_event_count": moved_journey_events,
                 },
             )
         )
