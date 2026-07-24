@@ -12,6 +12,9 @@ from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.models import (
+    AIJobStatus,
+    AIJobType,
+    AIProcessingJob,
     CameraZoneMapping,
     CaptureEvent,
     CaptureEventStatus,
@@ -22,6 +25,7 @@ from app.models import (
     EventType,
     PresenceSession,
     PresenceStatus,
+    ProcessingPriority,
     Snapshot,
     Tracking,
     VirtualLine,
@@ -42,9 +46,11 @@ class PipelineRepository:
         session_factory: Any,
         *,
         evidence_retention_days: int = 90,
+        ai_job_max_attempts: int = 5,
     ) -> None:
         self._session_factory = session_factory
         self._evidence_retention_days = evidence_retention_days
+        self._ai_job_max_attempts = ai_job_max_attempts
 
     async def identify_person(
         self,
@@ -264,12 +270,12 @@ class PipelineRepository:
                 zone_id = mapping.zone_id if mapping is not None else None
 
             retention_days = self._evidence_retention_days
+            processing_priority = ProcessingPriority.NORMAL
             if zone_id is not None:
-                configured_retention = await session.scalar(
-                    select(Zone.retention_days).where(Zone.id == zone_id)
-                )
-                if configured_retention is not None:
-                    retention_days = int(configured_retention)
+                zone = await session.get(Zone, zone_id)
+                if zone is not None:
+                    retention_days = int(zone.retention_days)
+                    processing_priority = zone.processing_priority
 
             capture_event = CaptureEvent(
                 id=snapshot.capture_event_id if snapshot and snapshot.capture_event_id else event.id,
@@ -284,7 +290,7 @@ class PipelineRepository:
                 virtual_line_id=virtual_line.id if virtual_line is not None else None,
                 tracking_id=database_tracking_id,
                 status=(
-                    CaptureEventStatus.CAPTURED
+                    CaptureEventStatus.QUEUED
                     if snapshot is not None
                     else CaptureEventStatus.FAILED
                 ),
@@ -314,6 +320,8 @@ class PipelineRepository:
                 failed_at=crossing.occurred_at if snapshot is None else None,
                 error_message=snapshot_error if snapshot is None else None,
                 attempt_count=0,
+                retry_count=0,
+                failure_reason=snapshot_error if snapshot is None else None,
                 created_at=crossing.occurred_at,
                 updated_at=crossing.occurred_at,
             )
@@ -349,6 +357,27 @@ class PipelineRepository:
                             ),
                         )
                     )
+                processing_job = AIProcessingJob(
+                    id=uuid4(),
+                    capture_event_id=capture_event.id,
+                    job_type=AIJobType.CAPTURE_INGESTION,
+                    status=AIJobStatus.QUEUED,
+                    priority=processing_priority,
+                    idempotency_key=f"capture-ingestion:{capture_event.id}",
+                    payload={
+                        "capture_event_id": str(capture_event.id),
+                        "camera_id": str(tracking.camera_id),
+                        "zone_id": str(zone_id) if zone_id else None,
+                    },
+                    attempt_count=0,
+                    max_attempts=self._ai_job_max_attempts,
+                    available_at=crossing.occurred_at,
+                    created_at=crossing.occurred_at,
+                    updated_at=crossing.occurred_at,
+                )
+                session.add(processing_job)
+            else:
+                processing_job = None
             try:
                 await session.commit()
             except IntegrityError:
@@ -366,6 +395,11 @@ class PipelineRepository:
                 "snapshot_id": str(snapshot.snapshot_id) if snapshot else None,
                 "capture_event_id": str(capture_event.id),
                 "capture_status": capture_event.status.value,
+                "processing_job_id": (
+                    str(processing_job.id)
+                    if processing_job is not None
+                    else None
+                ),
             }
 
     @staticmethod

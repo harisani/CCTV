@@ -143,6 +143,25 @@ class Settings(BaseSettings):
     ai_tracking_persist_interval_seconds: float = Field(default=1.0, gt=0)
     ai_track_inactive_frames: int = Field(default=60, gt=0)
     ai_event_retry_queue_size: int = Field(default=1000, gt=0)
+    enable_ai_worker: bool = True
+    ai_worker_id: str = Field(default="", max_length=160)
+    ai_worker_concurrency: int = Field(default=1, ge=1, le=16)
+    ai_queue_poll_interval_seconds: float = Field(default=0.5, ge=0.05, le=60)
+    ai_job_lease_seconds: float = Field(default=30.0, ge=5, le=3600)
+    ai_job_heartbeat_seconds: float = Field(default=10.0, ge=1, le=600)
+    ai_job_timeout_seconds: float = Field(default=120.0, ge=1, le=7200)
+    ai_job_max_attempts: int = Field(default=5, ge=1, le=100)
+    ai_retry_base_delay_seconds: float = Field(default=2.0, ge=0.1, le=3600)
+    ai_retry_max_delay_seconds: float = Field(default=300.0, ge=0.1, le=86400)
+    ai_lease_recovery_interval_seconds: float = Field(
+        default=5.0, ge=1, le=300
+    )
+    ai_worker_shutdown_timeout_seconds: float = Field(
+        default=30.0, ge=1, le=120
+    )
+    ai_queue_backlog_warning_threshold: int = Field(
+        default=100, ge=1, le=1_000_000
+    )
     reid_min_crop_width: int = Field(default=32, gt=0)
     reid_min_crop_height: int = Field(default=64, gt=0)
     torch_num_threads: int = Field(default=0, ge=0)
@@ -155,6 +174,14 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_security_configuration(self) -> "Settings":
+        if self.ai_job_heartbeat_seconds >= self.ai_job_lease_seconds:
+            raise ValueError(
+                "AI_JOB_HEARTBEAT_SECONDS must be lower than AI_JOB_LEASE_SECONDS"
+            )
+        if self.ai_retry_base_delay_seconds > self.ai_retry_max_delay_seconds:
+            raise ValueError(
+                "AI_RETRY_BASE_DELAY_SECONDS must not exceed AI_RETRY_MAX_DELAY_SECONDS"
+            )
         if self.app_env != "production":
             return self
 

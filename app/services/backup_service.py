@@ -22,6 +22,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.models import (
+    AIProcessingJob,
     AuditLog,
     BackupArchive,
     BackupSource,
@@ -45,7 +46,7 @@ from app.models import (
 from app.repository import AuditRepository, BackupRepository
 
 ARCHIVE_FORMAT = "cctv-people-flow-observational-backup"
-ARCHIVE_SCHEMA_VERSION = 4
+ARCHIVE_SCHEMA_VERSION = 5
 ARCHIVE_ENTITIES_V1 = frozenset(
     {"cameras", "persons", "trackings", "events", "snapshots", "users", "audit_logs"}
 )
@@ -58,10 +59,11 @@ ARCHIVE_ENTITIES_V3 = ARCHIVE_ENTITIES_V2 | {
     "zone_adjacencies",
     "virtual_lines",
 }
-ARCHIVE_ENTITIES = ARCHIVE_ENTITIES_V3 | {
+ARCHIVE_ENTITIES_V4 = ARCHIVE_ENTITIES_V3 | {
     "capture_events",
     "evidence_assets",
 }
+ARCHIVE_ENTITIES = ARCHIVE_ENTITIES_V4 | {"ai_processing_jobs"}
 _backup_lock = asyncio.Lock()
 
 
@@ -237,7 +239,7 @@ class ArchiveCodec:
         if manifest.get("format") != ARCHIVE_FORMAT:
             raise ValueError("Archive format is not supported")
         schema_version = manifest.get("schema_version")
-        if schema_version not in {1, 2, 3, ARCHIVE_SCHEMA_VERSION}:
+        if schema_version not in {1, 2, 3, 4, ARCHIVE_SCHEMA_VERSION}:
             raise ValueError("Archive schema version is not supported")
         try:
             date.fromisoformat(manifest["backup_date"])
@@ -275,7 +277,8 @@ class ArchiveCodec:
             1: ARCHIVE_ENTITIES_V1,
             2: ARCHIVE_ENTITIES_V2,
             3: ARCHIVE_ENTITIES_V3,
-            4: ARCHIVE_ENTITIES,
+            4: ARCHIVE_ENTITIES_V4,
+            5: ARCHIVE_ENTITIES,
         }[schema_version]
         for entity in required_entities:
             member = f"data/{entity}.jsonl"
@@ -655,6 +658,23 @@ class BackupService:
                 )
             ).all()
         )
+        processing_jobs = list(
+            (
+                await session.scalars(
+                    select(AIProcessingJob)
+                    .join(
+                        CaptureEvent,
+                        CaptureEvent.id
+                        == AIProcessingJob.capture_event_id,
+                    )
+                    .where(
+                        CaptureEvent.captured_at >= start_at,
+                        CaptureEvent.captured_at < end_at,
+                    )
+                    .order_by(AIProcessingJob.created_at)
+                )
+            ).all()
+        )
         presence_sessions = list(
             (
                 await session.scalars(
@@ -729,6 +749,18 @@ class BackupService:
                 _model_record(item) for item in capture_events
             ],
             "evidence_assets": evidence_records,
+            "ai_processing_jobs": [
+                _model_record(
+                    item,
+                    excluded={
+                        "locked_by",
+                        "locked_at",
+                        "lock_expires_at",
+                        "last_heartbeat_at",
+                    },
+                )
+                for item in processing_jobs
+            ],
             "presence_sessions": [_model_record(item) for item in presence_sessions],
             "snapshots": snapshot_records,
             "users": [

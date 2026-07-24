@@ -30,8 +30,11 @@ class FakeCaptureEvidenceService:
             captured_at=datetime.now(UTC),
             processing_started_at=None,
             processed_at=None,
+            dashboard_updated_at=None,
+            processing_latency_ms=None,
             failed_at=None,
             attempt_count=0,
+            retry_count=0,
             evidence_assets=[],
         )
 

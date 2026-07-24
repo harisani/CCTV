@@ -419,6 +419,7 @@ class RealtimePipelineFactory:
         self._persistence = PipelineRepository(
             session_factory,
             evidence_retention_days=settings.evidence_default_retention_days,
+            ai_job_max_attempts=settings.ai_job_max_attempts,
         )
         self._inference_semaphore = asyncio.Semaphore(
             settings.ai_max_concurrent_inferences

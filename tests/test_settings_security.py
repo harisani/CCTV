@@ -84,3 +84,21 @@ def test_evidence_access_expiry_is_bounded(seconds: int) -> None:
     values["evidence_access_token_expire_seconds"] = seconds
     with pytest.raises(ValidationError):
         Settings(**values)
+
+
+def test_ai_worker_heartbeat_must_be_shorter_than_lease() -> None:
+    values = secure_values()
+    values["ai_job_lease_seconds"] = 10
+    values["ai_job_heartbeat_seconds"] = 10
+
+    with pytest.raises(ValidationError, match="must be lower"):
+        Settings(**values)
+
+
+def test_ai_retry_base_delay_must_not_exceed_maximum() -> None:
+    values = secure_values()
+    values["ai_retry_base_delay_seconds"] = 20
+    values["ai_retry_max_delay_seconds"] = 10
+
+    with pytest.raises(ValidationError, match="must not exceed"):
+        Settings(**values)

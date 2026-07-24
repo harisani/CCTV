@@ -52,8 +52,11 @@ class CaptureEventResponse(BaseModel):
     captured_at: datetime
     processing_started_at: datetime | None
     processed_at: datetime | None
+    dashboard_updated_at: datetime | None
+    processing_latency_ms: int | None
     failed_at: datetime | None
     attempt_count: int
+    retry_count: int
 
 
 class CaptureEventDetailResponse(CaptureEventResponse):

@@ -1,6 +1,9 @@
 """Domain and SQLAlchemy ORM models."""
 
 from app.models.entities import (
+    AIJobStatus,
+    AIJobType,
+    AIProcessingJob,
     AuditLog,
     BackupArchive,
     BackupSource,
@@ -36,6 +39,9 @@ from app.models.entities import (
 )
 
 __all__ = [
+    "AIJobStatus",
+    "AIJobType",
+    "AIProcessingJob",
     "AuditLog",
     "BackupArchive",
     "BackupSource",

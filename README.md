@@ -62,6 +62,9 @@ scrypt di PostgreSQL, bukan kembali ke `.env`.
 - Phase 3 evidence assets use immutable relative storage keys and SHA-256
   checksums. Database triggers prevent changing an asset's capture identity,
   storage key, or enrolled checksum after creation.
+- Phase 4 AI jobs use a durable PostgreSQL queue. Claims use row locks,
+  ownership leases, heartbeat renewal, bounded retry, and unique idempotency
+  keys so a restart does not duplicate processing.
 - Snapshot list responses expose stable snapshot/event IDs, bounding boxes, and
   timestamps only. Server filesystem paths for images and metadata remain
   internal persistence details and are never part of the public API contract.
@@ -412,6 +415,46 @@ melakukan hashing streaming lalu mengenrol checksum pertama atau menandai file
 `MISSING`/`CORRUPT`. Detail tersedia di
 [`docs/audits/2026-07-24-phase3-capture-evidence-report.md`](docs/audits/2026-07-24-phase3-capture-evidence-report.md).
 
+### Antrean asynchronous dan AI processing jobs
+
+Phase 4 memisahkan capture kamera dari pekerjaan AI lanjutan menggunakan
+antrean durable di PostgreSQL. Penyimpanan capture dan pembuatan job dilakukan
+dalam transaksi yang sama. Worker mengambil job berdasarkan prioritas
+`HIGH → NORMAL → LOW` dengan `FOR UPDATE SKIP LOCKED`, sehingga beberapa worker
+dapat berjalan tanpa mengerjakan record yang sama.
+
+Status job:
+
+```text
+QUEUED → PROCESSING → COMPLETED
+                    ↘ RETRYING → PROCESSING
+                    ↘ FAILED
+                    ↘ CANCELLED
+```
+
+Setiap claim memiliki lease dan heartbeat. Jika proses mati, lease kedaluwarsa
+akan dikembalikan ke `RETRYING`, atau menjadi `FAILED` jika batas percobaan
+habis. Retry memakai exponential backoff. Pada Phase 4 handler
+`CAPTURE_INGESTION` memvalidasi manifest evidence; model deteksi AI aktual
+ditambahkan pada phase berikutnya.
+
+Endpoint observasi dan administrasi:
+
+```text
+GET  /api/v1/processing-jobs
+GET  /api/v1/processing-jobs/statistics
+GET  /api/v1/processing-jobs/{job_id}
+POST /api/v1/processing-jobs/{job_id}/retry   # ADMIN / SUPER_ADMIN
+POST /api/v1/processing-jobs/{job_id}/cancel  # ADMIN / SUPER_ADMIN
+```
+
+Konfigurasi worker berasal dari `.env`, terutama `ENABLE_AI_WORKER`,
+`AI_WORKER_CONCURRENCY`, `AI_JOB_LEASE_SECONDS`,
+`AI_JOB_HEARTBEAT_SECONDS`, `AI_JOB_TIMEOUT_SECONDS`,
+`AI_JOB_MAX_ATTEMPTS`, serta pengaturan retry dan recovery. Detail desain dan
+verifikasi tersedia di
+[`docs/audits/2026-07-24-phase4-async-processing-report.md`](docs/audits/2026-07-24-phase4-async-processing-report.md).
+
 ### Okupansi tahan gangguan kamera
 
 Jumlah orang saat ini berasal dari sesi keberadaan yang dibuka oleh event
@@ -446,9 +489,9 @@ app/
 ├── api/          HTTP routes, JWT, schema, DI, dan error handler
 ├── config/       Settings Pydantic dari .env
 ├── database/     Engine dan async SQLAlchemy session
-├── models/       Entitas ORM termasuk topology, capture, evidence, backup, dan DR
-├── repository/   Query per entitas serta transaksi pipeline dan evidence
-├── services/     Kamera, topology, capture, pipeline AI, backup/DR, dan scheduler
+├── models/       Entitas ORM termasuk topology, capture, evidence, AI job, backup, dan DR
+├── repository/   Query per entitas, transaksi pipeline, evidence, dan durable queue
+├── services/     Kamera, capture, worker AI, topology, backup/DR, dan scheduler
 ├── detector/     Adapter YOLOv11
 ├── tracker/      Adapter ByteTrack + riwayat centroid
 ├── reid/         OSNet/TorchReID dan pencocokan embedding

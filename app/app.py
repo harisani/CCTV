@@ -15,6 +15,7 @@ from app.utils.logging import configure_logging
 from app.utils.runtime import configure_compute_runtime
 from app.services.user_service import ensure_bootstrap_admin
 from app.services.backup_scheduler import BackupScheduler
+from app.services.ai_processing_worker import AIProcessingWorker
 from app.services.disaster_recovery_scheduler import DisasterRecoveryScheduler
 from app.services.realtime_pipeline import RealtimePipelineFactory
 from app.services.reid_retention_service import ReIdRetentionService
@@ -35,6 +36,7 @@ async def lifespan(application: FastAPI):
     configure_compute_runtime(settings)
     await ensure_bootstrap_admin(SessionLocal, settings)
     camera_runtime: CameraRuntimeManager | None = None
+    ai_worker: AIProcessingWorker | None = None
     backup_scheduler: BackupScheduler | None = None
     dr_scheduler: DisasterRecoveryScheduler | None = None
     reid_retention: ReIdRetentionService | None = None
@@ -54,6 +56,13 @@ async def lifespan(application: FastAPI):
         dashboard_hub,
     )
     await presence_reconciliation.start()
+    if settings.enable_ai_worker:
+        ai_worker = AIProcessingWorker(
+            settings,
+            SessionLocal,
+            dashboard_hub=dashboard_hub,
+        )
+        await ai_worker.start()
     if settings.enable_camera_runtime:
         pipeline_factory = (
             RealtimePipelineFactory(settings, SessionLocal)
@@ -75,6 +84,8 @@ async def lifespan(application: FastAPI):
         application.state.ready = False
         if camera_runtime is not None:
             await camera_runtime.stop()
+        if ai_worker is not None:
+            await ai_worker.stop()
         if presence_reconciliation is not None:
             await presence_reconciliation.stop()
         if backup_scheduler is not None:

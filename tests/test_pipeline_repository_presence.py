@@ -7,6 +7,7 @@ from pathlib import Path
 
 from app.models import (
     CaptureEvent,
+    AIProcessingJob,
     EvidenceAsset,
     EvidenceAssetType,
     Event,
@@ -120,7 +121,8 @@ class PipelineRepositoryPresenceTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(created)
         self.assertEqual(payload["capture_event_id"], str(event_id))
-        self.assertEqual(payload["capture_status"], "CAPTURED")
+        self.assertEqual(payload["capture_status"], "QUEUED")
+        self.assertIsNotNone(payload["processing_job_id"])
         captures = [
             item for item in session.added if isinstance(item, CaptureEvent)
         ]
@@ -131,6 +133,15 @@ class PipelineRepositoryPresenceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(captures[0].idempotency_key, f"crossing:{event_id}")
         self.assertEqual(len(assets), 1)
         self.assertEqual(assets[0].checksum_sha256, "a" * 64)
+        jobs = [
+            item
+            for item in session.added
+            if isinstance(item, AIProcessingJob)
+        ]
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(
+            jobs[0].idempotency_key, f"capture-ingestion:{event_id}"
+        )
 
     async def test_orphan_exit_is_suppressed(self) -> None:
         database_tracking_id = uuid4()

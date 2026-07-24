@@ -7,6 +7,7 @@ from app.config.settings import Settings, get_settings
 from app.database.session import get_session
 from app.repository import (
     BackupRepository,
+    AIJobRepository,
     CameraRepository,
     CaptureEvidenceRepository,
     DisasterRecoveryRepository,
@@ -18,6 +19,7 @@ from app.repository import (
     UserRepository,
 )
 from app.services.container import ServiceContainer, get_service_container
+from app.services.ai_job_service import AIJobService
 from app.services.health_service import HealthService
 from app.services.capture_evidence_service import CaptureEvidenceService
 from app.services.login_rate_limiter import LoginRateLimiter
@@ -89,6 +91,17 @@ async def get_capture_evidence_service(
     yield CaptureEvidenceService(
         CaptureEvidenceRepository(session),
         settings,
+    )
+
+
+async def get_ai_job_service(
+    settings: Settings = Depends(get_app_settings),
+    session: AsyncSession = Depends(get_database_session),
+) -> AsyncGenerator[AIJobService, None]:
+    """Provide durable queue observation and administration use cases."""
+    yield AIJobService(
+        AIJobRepository(session),
+        backlog_warning_threshold=settings.ai_queue_backlog_warning_threshold,
     )
 
 

@@ -61,6 +61,24 @@ class EvidenceIntegrityStatus(StrEnum):
     CORRUPT = "CORRUPT"
 
 
+class AIJobStatus(StrEnum):
+    QUEUED = "QUEUED"
+    PROCESSING = "PROCESSING"
+    RETRYING = "RETRYING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+
+
+class AIJobType(StrEnum):
+    CAPTURE_INGESTION = "CAPTURE_INGESTION"
+    PERSON_DETECTION = "PERSON_DETECTION"
+    IDENTITY_CORRELATION = "IDENTITY_CORRELATION"
+    JOURNEY_CORRELATION = "JOURNEY_CORRELATION"
+    OCCUPANCY_UPDATE = "OCCUPANCY_UPDATE"
+    POLICY_EVALUATION = "POLICY_EVALUATION"
+
+
 class PresenceStatus(StrEnum):
     ACTIVE = "ACTIVE"
     UNCERTAIN = "UNCERTAIN"
@@ -537,9 +555,15 @@ class CaptureEvent(Base):
         DateTime(timezone=True)
     )
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    dashboard_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    processing_latency_ms: Mapped[int | None] = mapped_column(BigInteger)
     failed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error_message: Mapped[str | None] = mapped_column(Text)
     attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    retry_count: Mapped[int] = mapped_column(Integer, default=0)
+    failure_reason: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.utcnow
     )
@@ -555,6 +579,11 @@ class CaptureEvent(Base):
         back_populates="capture_event",
         cascade="all, delete-orphan",
         order_by="EvidenceAsset.sequence_index",
+    )
+    processing_jobs: Mapped[list[AIProcessingJob]] = relationship(
+        back_populates="capture_event",
+        cascade="all, delete-orphan",
+        order_by="AIProcessingJob.created_at",
     )
 
 
@@ -611,6 +640,65 @@ class EvidenceAsset(Base):
     )
     legacy_snapshot: Mapped[Snapshot | None] = relationship(
         back_populates="evidence_assets"
+    )
+
+
+class AIProcessingJob(Base):
+    """Durable, leased work item consumed by one asynchronous AI worker."""
+
+    __tablename__ = "ai_processing_jobs"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    capture_event_id: Mapped[UUID] = mapped_column(
+        ForeignKey("capture_events.id", ondelete="CASCADE"), index=True
+    )
+    job_type: Mapped[AIJobType] = mapped_column(
+        Enum(AIJobType, name="ai_job_type"), index=True
+    )
+    status: Mapped[AIJobStatus] = mapped_column(
+        Enum(AIJobStatus, name="ai_job_status"),
+        default=AIJobStatus.QUEUED,
+        index=True,
+    )
+    priority: Mapped[ProcessingPriority] = mapped_column(
+        Enum(ProcessingPriority, name="processing_priority"),
+        default=ProcessingPriority.NORMAL,
+        index=True,
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(200), unique=True)
+    payload: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, default=5)
+    available_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, index=True
+    )
+    locked_by: Mapped[str | None] = mapped_column(String(160), index=True)
+    locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    lock_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
+    last_heartbeat_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
+    failed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cancelled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    last_error_code: Mapped[str | None] = mapped_column(String(100), index=True)
+    last_error_message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+    capture_event: Mapped[CaptureEvent] = relationship(
+        back_populates="processing_jobs"
     )
 
 

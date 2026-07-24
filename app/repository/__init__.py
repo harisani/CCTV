@@ -1,6 +1,7 @@
 """Async repository implementations."""
 
 from app.repository.audit_repository import AuditRepository
+from app.repository.ai_job_repository import AIJobRepository
 from app.repository.backup_repository import BackupRepository
 from app.repository.camera_repository import CameraRepository
 from app.repository.capture_evidence_repository import CaptureEvidenceRepository
@@ -16,6 +17,7 @@ from app.repository.user_repository import UserRepository
 
 __all__ = [
     "AuditRepository",
+    "AIJobRepository",
     "BackupRepository",
     "CameraRepository",
     "CaptureEvidenceRepository",
