@@ -55,6 +55,7 @@ class EvidenceStorageService:
         sequence_index: int = 0,
         is_primary: bool = False,
         metadata: dict[str, Any] | None = None,
+        idempotent: bool = False,
     ) -> EvidenceFile:
         target = self.resolve_key(storage_key)
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -69,7 +70,11 @@ class EvidenceStorageService:
                 [cv2.IMWRITE_JPEG_QUALITY, self._jpeg_quality],
             ):
                 raise OSError("OpenCV could not encode evidence image")
-            self._publish_once(temporary, target)
+            self._publish_once(
+                temporary,
+                target,
+                idempotent=idempotent,
+            )
         finally:
             temporary.unlink(missing_ok=True)
 
@@ -138,16 +143,35 @@ class EvidenceStorageService:
         for file in files:
             file.path.unlink(missing_ok=True)
 
-    @staticmethod
-    def _publish_once(temporary: Path, target: Path) -> None:
+    @classmethod
+    def _publish_once(
+        cls,
+        temporary: Path,
+        target: Path,
+        *,
+        idempotent: bool = False,
+    ) -> None:
         try:
             os.link(temporary, target)
         except FileExistsError as error:
+            if idempotent and cls._file_checksum(temporary) == cls._file_checksum(
+                target
+            ):
+                temporary.unlink()
+                return
             raise FileExistsError(
                 "Immutable evidence target already exists"
             ) from error
         temporary.unlink()
         target.chmod(0o640)
+
+    @staticmethod
+    def _file_checksum(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
 
     def _describe(
         self,

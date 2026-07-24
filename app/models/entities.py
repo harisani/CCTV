@@ -10,6 +10,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     Enum,
@@ -22,6 +23,7 @@ from sqlalchemy import (
     UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.dialects.postgresql import JSONB
 from pgvector.sqlalchemy import Vector
 
 from app.database.base import Base
@@ -82,6 +84,26 @@ class AIJobType(StrEnum):
     JOURNEY_CORRELATION = "JOURNEY_CORRELATION"
     OCCUPANCY_UPDATE = "OCCUPANCY_UPDATE"
     POLICY_EVALUATION = "POLICY_EVALUATION"
+
+
+class BiometricModality(StrEnum):
+    FACE = "FACE"
+    PERIOCULAR = "PERIOCULAR"
+
+
+class IdentityDecision(StrEnum):
+    CONFIRMED = "CONFIRMED"
+    PROBABLE = "PROBABLE"
+    UNRESOLVED = "UNRESOLVED"
+    UNKNOWN = "UNKNOWN"
+    CONFLICT = "CONFLICT"
+
+
+class IdentityReviewStatus(StrEnum):
+    NOT_REQUIRED = "NOT_REQUIRED"
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
 
 
 class PresenceStatus(StrEnum):
@@ -578,6 +600,181 @@ class ZoneEvent(Base):
     tracking: Mapped[Tracking | None] = relationship(
         back_populates="zone_events"
     )
+
+
+class ModelVersion(Base):
+    """Auditable AI artifact version and decision thresholds."""
+
+    __tablename__ = "model_versions"
+    __table_args__ = (
+        UniqueConstraint(
+            "model_key",
+            "version",
+            name="uq_model_version_key_version",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    model_key: Mapped[str] = mapped_column(String(100), index=True)
+    name: Mapped[str] = mapped_column(String(160))
+    version: Mapped[str] = mapped_column(String(80))
+    task: Mapped[str] = mapped_column(String(100), index=True)
+    runtime: Mapped[str] = mapped_column(String(80))
+    artifact_checksum_sha256: Mapped[str] = mapped_column(String(64))
+    native_embedding_dimension: Mapped[int | None] = mapped_column(Integer)
+    thresholds: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow
+    )
+
+
+class FaceCandidate(Base):
+    """Quality-scored face and periocular evidence from one capture."""
+
+    __tablename__ = "face_candidates"
+    __table_args__ = (
+        UniqueConstraint(
+            "capture_event_id",
+            "sequence_index",
+            name="uq_face_candidate_capture_sequence",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    capture_event_id: Mapped[UUID] = mapped_column(
+        ForeignKey("capture_events.id", ondelete="CASCADE"), index=True
+    )
+    face_asset_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("evidence_assets.id", ondelete="SET NULL"), index=True
+    )
+    periocular_asset_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("evidence_assets.id", ondelete="SET NULL"), index=True
+    )
+    detector_model_version_id: Mapped[UUID] = mapped_column(
+        ForeignKey("model_versions.id", ondelete="RESTRICT"), index=True
+    )
+    sequence_index: Mapped[int] = mapped_column(Integer)
+    bbox: Mapped[dict[str, float]] = mapped_column(JSONB)
+    landmarks: Mapped[list[dict[str, float]] | None] = mapped_column(JSONB)
+    detection_confidence: Mapped[float] = mapped_column(Float)
+    quality_score: Mapped[float] = mapped_column(Float, index=True)
+    quality_metrics: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    selected: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    rejection_reason: Mapped[str | None] = mapped_column(String(160))
+    captured_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow
+    )
+
+
+class BiometricTemplate(Base):
+    """Sensitive reference embedding; raw vectors never leave the backend."""
+
+    __tablename__ = "biometric_templates"
+    __table_args__ = (
+        CheckConstraint(
+            "person_id IS NOT NULL OR external_subject_key IS NOT NULL",
+            name="ck_biometric_template_subject",
+        ),
+        CheckConstraint(
+            "native_dimension BETWEEN 1 AND 512",
+            name="ck_biometric_template_native_dimension",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    person_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("persons.id", ondelete="CASCADE"), index=True
+    )
+    external_subject_key: Mapped[str | None] = mapped_column(
+        String(160), index=True
+    )
+    source_asset_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("evidence_assets.id", ondelete="SET NULL"), index=True
+    )
+    model_version_id: Mapped[UUID] = mapped_column(
+        ForeignKey("model_versions.id", ondelete="RESTRICT"), index=True
+    )
+    modality: Mapped[BiometricModality] = mapped_column(
+        Enum(BiometricModality, name="biometric_modality"), index=True
+    )
+    embedding: Mapped[list[float]] = mapped_column(Vector(512))
+    native_dimension: Mapped[int] = mapped_column(Integer)
+    quality_score: Mapped[float] = mapped_column(Float, index=True)
+    template_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    enrolled_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+
+
+class IdentityMatch(Base):
+    """One fail-safe identity decision for a capture and model version."""
+
+    __tablename__ = "identity_matches"
+    __table_args__ = (
+        UniqueConstraint(
+            "capture_event_id",
+            "model_version_id",
+            name="uq_identity_match_capture_model",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    idempotency_key: Mapped[str] = mapped_column(
+        String(200), unique=True
+    )
+    capture_event_id: Mapped[UUID] = mapped_column(
+        ForeignKey("capture_events.id", ondelete="CASCADE"), index=True
+    )
+    face_candidate_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("face_candidates.id", ondelete="SET NULL"), index=True
+    )
+    matched_template_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("biometric_templates.id", ondelete="SET NULL"), index=True
+    )
+    candidate_person_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("persons.id", ondelete="SET NULL"), index=True
+    )
+    candidate_external_subject_key: Mapped[str | None] = mapped_column(
+        String(160), index=True
+    )
+    model_version_id: Mapped[UUID] = mapped_column(
+        ForeignKey("model_versions.id", ondelete="RESTRICT"), index=True
+    )
+    modality: Mapped[BiometricModality] = mapped_column(
+        Enum(BiometricModality, name="biometric_modality"), index=True
+    )
+    decision: Mapped[IdentityDecision] = mapped_column(
+        Enum(IdentityDecision, name="identity_decision"), index=True
+    )
+    similarity_score: Mapped[float | None] = mapped_column(Float)
+    confidence_score: Mapped[float] = mapped_column(Float, index=True)
+    second_best_similarity: Mapped[float | None] = mapped_column(Float)
+    reasoning_metadata: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    review_status: Mapped[IdentityReviewStatus] = mapped_column(
+        Enum(IdentityReviewStatus, name="identity_review_status"),
+        index=True,
+    )
+    matched_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    reviewed_by_user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    review_note: Mapped[str | None] = mapped_column(Text)
 
 
 class Snapshot(Base):

@@ -27,6 +27,7 @@ from app.models import (
     BackupArchive,
     BackupSource,
     BackupStatus,
+    BiometricTemplate,
     Building,
     Camera,
     CameraRole,
@@ -34,6 +35,9 @@ from app.models import (
     CaptureEvent,
     EvidenceAsset,
     Event,
+    FaceCandidate,
+    IdentityMatch,
+    ModelVersion,
     Person,
     PresenceSession,
     Snapshot,
@@ -47,7 +51,7 @@ from app.models import (
 from app.repository import AuditRepository, BackupRepository
 
 ARCHIVE_FORMAT = "cctv-people-flow-observational-backup"
-ARCHIVE_SCHEMA_VERSION = 6
+ARCHIVE_SCHEMA_VERSION = 7
 ARCHIVE_ENTITIES_V1 = frozenset(
     {"cameras", "persons", "trackings", "events", "snapshots", "users", "audit_logs"}
 )
@@ -65,7 +69,13 @@ ARCHIVE_ENTITIES_V4 = ARCHIVE_ENTITIES_V3 | {
     "evidence_assets",
 }
 ARCHIVE_ENTITIES_V5 = ARCHIVE_ENTITIES_V4 | {"ai_processing_jobs"}
-ARCHIVE_ENTITIES = ARCHIVE_ENTITIES_V5 | {"zone_events"}
+ARCHIVE_ENTITIES_V6 = ARCHIVE_ENTITIES_V5 | {"zone_events"}
+ARCHIVE_ENTITIES = ARCHIVE_ENTITIES_V6 | {
+    "model_versions",
+    "face_candidates",
+    "biometric_templates",
+    "identity_matches",
+}
 _backup_lock = asyncio.Lock()
 
 
@@ -288,7 +298,8 @@ class ArchiveCodec:
             3: ARCHIVE_ENTITIES_V3,
             4: ARCHIVE_ENTITIES_V4,
             5: ARCHIVE_ENTITIES_V5,
-            6: ARCHIVE_ENTITIES,
+            6: ARCHIVE_ENTITIES_V6,
+            7: ARCHIVE_ENTITIES,
         }[schema_version]
         for entity in required_entities:
             member = f"data/{entity}.jsonl"
@@ -685,6 +696,78 @@ class BackupService:
                 )
             ).all()
         )
+        face_candidates = list(
+            (
+                await session.scalars(
+                    select(FaceCandidate)
+                    .join(
+                        CaptureEvent,
+                        CaptureEvent.id == FaceCandidate.capture_event_id,
+                    )
+                    .where(
+                        CaptureEvent.captured_at >= start_at,
+                        CaptureEvent.captured_at < end_at,
+                    )
+                    .order_by(FaceCandidate.captured_at)
+                )
+            ).all()
+        )
+        identity_matches = list(
+            (
+                await session.scalars(
+                    select(IdentityMatch)
+                    .join(
+                        CaptureEvent,
+                        CaptureEvent.id == IdentityMatch.capture_event_id,
+                    )
+                    .where(
+                        CaptureEvent.captured_at >= start_at,
+                        CaptureEvent.captured_at < end_at,
+                    )
+                    .order_by(IdentityMatch.matched_at)
+                )
+            ).all()
+        )
+        biometric_templates = list(
+            (
+                await session.scalars(
+                    select(BiometricTemplate)
+                    .where(
+                        BiometricTemplate.source_asset_id.in_(
+                            select(EvidenceAsset.id)
+                            .join(
+                                CaptureEvent,
+                                CaptureEvent.id
+                                == EvidenceAsset.capture_event_id,
+                            )
+                            .where(
+                                CaptureEvent.captured_at >= start_at,
+                                CaptureEvent.captured_at < end_at,
+                            )
+                        )
+                    )
+                    .order_by(BiometricTemplate.enrolled_at)
+                )
+            ).all()
+        )
+        relevant_model_ids = {
+            *(item.detector_model_version_id for item in face_candidates),
+            *(item.model_version_id for item in identity_matches),
+            *(item.model_version_id for item in biometric_templates),
+        }
+        model_versions = (
+            list(
+                (
+                    await session.scalars(
+                        select(ModelVersion)
+                        .where(ModelVersion.id.in_(relevant_model_ids))
+                        .order_by(ModelVersion.model_key)
+                    )
+                ).all()
+            )
+            if relevant_model_ids
+            else []
+        )
         zone_events = list(
             (
                 await session.scalars(
@@ -782,6 +865,21 @@ class BackupService:
                     },
                 )
                 for item in processing_jobs
+            ],
+            "model_versions": [
+                _model_record(item) for item in model_versions
+            ],
+            "face_candidates": [
+                _model_record(item) for item in face_candidates
+            ],
+            # Reference vectors are intentionally excluded from portable
+            # observational archives. Full encrypted DR retains the database.
+            "biometric_templates": [
+                _model_record(item, excluded={"embedding"})
+                for item in biometric_templates
+            ],
+            "identity_matches": [
+                _model_record(item) for item in identity_matches
             ],
             "zone_events": [_model_record(item) for item in zone_events],
             "presence_sessions": [_model_record(item) for item in presence_sessions],

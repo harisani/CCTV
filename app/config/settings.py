@@ -162,6 +162,28 @@ class Settings(BaseSettings):
     ai_queue_backlog_warning_threshold: int = Field(
         default=100, ge=1, le=1_000_000
     )
+    biometric_yunet_model_path: Path = Path(
+        "models/face_detection_yunet_2023mar.onnx"
+    )
+    biometric_sface_model_path: Path = Path(
+        "models/face_recognition_sface_2021dec.onnx"
+    )
+    biometric_face_detection_threshold: float = Field(
+        default=0.85, ge=0, le=1
+    )
+    biometric_face_nms_threshold: float = Field(default=0.3, ge=0, le=1)
+    biometric_face_top_k: int = Field(default=100, ge=1, le=5000)
+    biometric_min_face_size: int = Field(default=40, ge=16, le=1024)
+    biometric_max_candidates: int = Field(default=5, ge=1, le=50)
+    biometric_min_quality_score: float = Field(default=0.45, ge=0, le=1)
+    biometric_sharpness_reference: float = Field(default=150.0, gt=0)
+    biometric_confirmed_threshold: float = Field(default=0.50, ge=-1, le=1)
+    biometric_probable_threshold: float = Field(default=0.40, ge=-1, le=1)
+    biometric_conflict_margin: float = Field(default=0.05, ge=0, le=2)
+    biometric_candidate_limit: int = Field(default=100, ge=2, le=5000)
+    biometric_template_retention_days: int = Field(
+        default=365, ge=1, le=3650
+    )
     reid_min_crop_width: int = Field(default=32, gt=0)
     reid_min_crop_height: int = Field(default=64, gt=0)
     torch_num_threads: int = Field(default=0, ge=0)
@@ -181,6 +203,14 @@ class Settings(BaseSettings):
         if self.ai_retry_base_delay_seconds > self.ai_retry_max_delay_seconds:
             raise ValueError(
                 "AI_RETRY_BASE_DELAY_SECONDS must not exceed AI_RETRY_MAX_DELAY_SECONDS"
+            )
+        if (
+            self.biometric_probable_threshold
+            > self.biometric_confirmed_threshold
+        ):
+            raise ValueError(
+                "BIOMETRIC_PROBABLE_THRESHOLD must not exceed "
+                "BIOMETRIC_CONFIRMED_THRESHOLD"
             )
         if self.app_env != "production":
             return self

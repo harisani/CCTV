@@ -12,6 +12,7 @@ from app.models import (
 )
 from app.services.ai_processing_worker import (
     AIProcessingWorker,
+    HandlerResult,
     PermanentJobError,
 )
 
@@ -42,6 +43,8 @@ class QueueState:
         self.completed = None
         self.failed = None
         self.recovered = (0, 0)
+        self.capture = None
+        self.enqueued = None
 
 
 class FakeSession:
@@ -53,6 +56,9 @@ class FakeSession:
 
     async def __aexit__(self, *_args):
         return None
+
+    async def get(self, _model, _entity_id):
+        return self.state.capture
 
 
 class FakeRepository:
@@ -78,6 +84,10 @@ class FakeRepository:
         self.state.completed = (job_id, fields)
         return True
 
+    async def enqueue(self, **fields):
+        self.state.enqueued = fields
+        return object(), True
+
     async def fail(self, job_id, **fields):
         self.state.failed = (job_id, fields)
         return (
@@ -98,6 +108,15 @@ class SuccessHandler:
 class PermanentFailureHandler:
     async def handle(self, _job):
         raise PermanentJobError("invalid evidence manifest")
+
+
+class ChainingHandler:
+    async def handle(self, job):
+        return HandlerResult(
+            result={"stage": "CAPTURE_INGESTION"},
+            next_job_type=AIJobType.PERSON_DETECTION,
+            next_payload={"capture_event_id": str(job.capture_event_id)},
+        )
 
 
 class Registry:
@@ -177,3 +196,25 @@ async def test_worker_marks_permanent_failure_without_retry():
     assert state.failed[0] == state.job.id
     assert state.failed[1]["retryable"] is False
     assert state.failed[1]["error_code"] == "PERMANENTJOBERROR"
+
+
+@pytest.mark.anyio
+async def test_worker_enqueues_next_stage_without_finalizing_capture():
+    state = QueueState(make_job())
+    state.capture = object()
+    worker = AIProcessingWorker(
+        Settings(),
+        lambda: FakeSession(state),
+        handlers=Registry(ChainingHandler()),
+        worker_id="worker-test",
+    )
+
+    with patch(
+        "app.services.ai_processing_worker.AIJobRepository",
+        FakeRepository,
+    ):
+        processed = await worker.process_one()
+
+    assert processed is True
+    assert state.completed[1]["finalize_capture"] is False
+    assert state.enqueued["job_type"] == AIJobType.PERSON_DETECTION

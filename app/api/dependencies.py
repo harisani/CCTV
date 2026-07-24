@@ -8,6 +8,7 @@ from app.database.session import get_session
 from app.repository import (
     BackupRepository,
     AIJobRepository,
+    BiometricRepository,
     CameraRepository,
     CaptureEvidenceRepository,
     DisasterRecoveryRepository,
@@ -23,6 +24,7 @@ from app.services.container import ServiceContainer, get_service_container
 from app.services.ai_job_service import AIJobService
 from app.services.health_service import HealthService
 from app.services.capture_evidence_service import CaptureEvidenceService
+from app.services.biometric_identity_service import BiometricIdentityService
 from app.services.login_rate_limiter import LoginRateLimiter
 from app.services.topology_service import TopologyService
 from app.services.zone_transition_service import ZoneTransitionService
@@ -105,6 +107,14 @@ async def get_ai_job_service(
         AIJobRepository(session),
         backlog_warning_threshold=settings.ai_queue_backlog_warning_threshold,
     )
+
+
+async def get_biometric_identity_service(
+    settings: Settings = Depends(get_app_settings),
+    session: AsyncSession = Depends(get_database_session),
+) -> AsyncGenerator[BiometricIdentityService, None]:
+    """Provide biometric use cases without exposing raw embeddings."""
+    yield BiometricIdentityService(BiometricRepository(session), settings)
 
 
 async def get_zone_transition_service(

@@ -213,6 +213,8 @@ class AIJobRepository(BaseRepository[AIProcessingJob]):
         worker_id: str,
         result: dict[str, Any] | None,
         now: datetime,
+        finalize_capture: bool = True,
+        capture_status: CaptureEventStatus | None = None,
     ) -> bool:
         job = await self._locked_processing_job(job_id, worker_id, now)
         if job is None:
@@ -226,8 +228,8 @@ class AIJobRepository(BaseRepository[AIProcessingJob]):
         self._release_lock(job)
         job.updated_at = now
         capture = await self.session.get(CaptureEvent, job.capture_event_id)
-        if capture is not None:
-            capture.status = CaptureEventStatus.COMPLETED
+        if capture is not None and finalize_capture:
+            capture.status = capture_status or CaptureEventStatus.COMPLETED
             capture.processed_at = now
             capture.failed_at = None
             capture.failure_reason = None

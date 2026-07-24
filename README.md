@@ -65,6 +65,11 @@ scrypt di PostgreSQL, bukan kembali ke `.env`.
 - Phase 4 AI jobs use a durable PostgreSQL queue. Claims use row locks,
   ownership leases, heartbeat renewal, bounded retry, and unique idempotency
   keys so a restart does not duplicate processing.
+- Phase 6 uses pinned OpenCV Zoo YuNet/SFace artifacts. Face candidates and
+  periocular evidence are quality-scored; identity is confirmed only when both
+  the similarity threshold and the separation from the next distinct subject
+  are sufficient. Ambiguous/probable results require review and raw embeddings
+  are never returned by the API.
 - Snapshot list responses expose stable snapshot/event IDs, bounding boxes, and
   timestamps only. Server filesystem paths for images and metadata remain
   internal persistence details and are never part of the public API contract.
@@ -105,7 +110,9 @@ storage/backups/YYYY/MM/YYYYMMDD_<uuid>.zip
 ```
 
 ZIP memuat `manifest.json`, dataset JSON Lines, snapshot lama, capture event,
-dan evidence asset. Setiap member memiliki checksum SHA-256. File dibuat secara atomik;
+evidence asset, kandidat wajah/periocular, dan hasil identity matching. Embedding
+referensi tidak dimasukkan ke backup observasional; embedding tetap tersedia
+dalam backup DR terenkripsi. Setiap member memiliki checksum SHA-256. File dibuat secara atomik;
 job yang terputus akibat restart ditandai `FAILED` saat startup dan dapat dibuat
 ulang secara manual. Backup otomatis yang lebih tua dari
 `BACKUP_RETENTION_DAYS` dibersihkan, sedangkan arsip yang di-import tidak ikut
@@ -145,6 +152,42 @@ BACKUP_MAX_EXPANSION_RATIO=100
 JPEG umumnya sudah terkompresi, sehingga ZIP lebih banyak menghemat ruang pada
 dataset JSON daripada pada snapshot. Kendali kapasitas utama tetap retention
 dan kebijakan pemindahan arsip ke storage eksternal.
+
+## Phase 6: Face/periocular candidate dan identity matching
+
+Saat capture crossing masuk ke durable queue, worker menjalankan tiga job secara
+berurutan: `CAPTURE_INGESTION`, `PERSON_DETECTION`, lalu
+`IDENTITY_CORRELATION`. YuNet mencari kandidat wajah pada crop tubuh atau
+snapshot, menilai confidence, ukuran, ketajaman, dan pencahayaan, kemudian
+menyimpan `FACE_CROP` serta `PERIOCULAR_CROP` sebagai evidence immutable.
+Periocular saat ini hanya menjadi bukti fallback dan tidak dipaksakan menjadi
+hasil pengenalan.
+
+SFace menghasilkan embedding native 128 dimensi. Vektor dinormalisasi lalu
+di-zero-pad ke kolom `Vector(512)` sehingga cosine similarity tetap sama dan
+skema siap untuk recognizer 512 dimensi di masa depan. Keputusan:
+
+- `CONFIRMED`: skor melewati threshold dan berbeda cukup jauh dari subjek kedua;
+- `PROBABLE` atau `CONFLICT`: kandidat tersedia tetapi wajib review;
+- `UNKNOWN`: kualitas cukup, namun tidak ada referensi atau skor tidak cocok;
+- `UNRESOLVED`: tidak ada kandidat wajah yang layak/alignable.
+
+Endpoint terautentikasi tersedia di `/api/v1/biometrics`. Enrollment dan revoke
+template hanya untuk `SUPER_ADMIN`/`ADMIN` dan tercatat di audit log. Enrollment
+menggunakan `FACE_CROP` yang sudah tersimpan:
+
+```json
+{
+  "source_asset_id": "UUID_FACE_CROP",
+  "person_id": "UUID_PERSON",
+  "external_subject_key": null
+}
+```
+
+`external_subject_key` disediakan agar branch integrasi RFID kelak dapat
+mengaitkan employee tanpa mengubah format template. Threshold pada `.env`
+merupakan baseline konservatif dan wajib dikalibrasi menggunakan data CCTV,
+masker, APD, sudut, serta pencahayaan lokasi sebenarnya sebelum produksi.
 
 ## Disaster Recovery penuh
 
