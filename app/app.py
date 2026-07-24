@@ -27,7 +27,11 @@ async def lifespan(_: FastAPI):
     """Set up and release process-wide resources for the HTTP application."""
     settings = get_settings()
     services = get_service_container()
-    configure_logging(settings.log_level)
+    configure_logging(
+        settings.log_level,
+        settings.app_env,
+        settings.log_format,
+    )
     configure_compute_runtime(settings)
     await ensure_bootstrap_admin(SessionLocal, settings)
     camera_runtime: CameraRuntimeManager | None = None
