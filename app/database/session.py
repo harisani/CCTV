@@ -16,6 +16,10 @@ SessionLocal = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_co
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
-    """Yield a transactional database session and always close it afterwards."""
+    """Yield one request session and roll back any escaping failure."""
     async with SessionLocal() as session:
-        yield session
+        try:
+            yield session
+        except Exception:
+            await session.rollback()
+            raise
