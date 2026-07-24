@@ -4,7 +4,7 @@ Date: 2026-07-24
 Branch: `cctv/versi-1`  
 Design baseline: `80cc2f9`  
 Implementation-plan baseline: `090e016`  
-Verified implementation head: `02e07db`
+Verified implementation head: `e6a5dfe`
 
 ## Scope
 
@@ -56,6 +56,7 @@ or intentional CCTV pipeline behavior change was included.
 | `c2150c2` | Non-root and health-checked production containers |
 | `014314d` | Readiness handling for DNS/socket database outages |
 | `02e07db` | Bounded camera I/O and graceful container shutdown |
+| `e6a5dfe` | Close final AI, limiter, shutdown, WebSocket, and CORS blockers |
 
 ## Changed Files and Responsibilities
 
@@ -76,15 +77,17 @@ or intentional CCTV pipeline behavior change was included.
 - `app/services/camera_service.py` bounds native OpenCV open/read calls.
 - `app/services/camera_runtime_manager.py` and `app/services/container.py`
   propagate camera timeout configuration while retaining parallel shutdown.
-- `Dockerfile` runs production as UID/GID `10001`.
+- `Dockerfile` runs production as UID/GID `10001` and bundles the default YOLO
+  and OSNet weights into non-root-readable locations.
 - `docker-compose.yml` defines readiness-based startup, restart policy, and a
-  30-second API stop grace period.
+  45-second API stop grace period.
 - `.env.example` and `README.md` document the new operational settings.
 - The Phase 1 test files cover every new public or failure behavior.
 
-The complete diff from `80cc2f9` through `02e07db` changes 32 files with 3,916
-insertions and 78 deletions. Most insertions are the implementation plan and
-regression tests.
+The complete Git range from `80cc2f9` through `e6a5dfe` changes 35 files.
+That range also contains the separately requested removal of historical
+planning-workflow documents, so raw insertion/deletion totals do not represent
+the functional Phase 1 implementation size.
 
 ## RED/GREEN Evidence by Task
 
@@ -109,17 +112,23 @@ regression tests.
    `02e07db` reduced failed RTSP open operations from approximately 30 seconds
    to the configured five-second default and changed API stop from exit 137 to
    exit 0. Its focused gate passed 13 tests in 1.40 seconds.
+9. Final review found four additional production blockers. Commit `e6a5dfe`
+   bundles both AI model weights for offline non-root loading, reserves login
+   attempts before password evaluation, adds a process-wide camera shutdown
+   deadline, logs WebSocket failures inside their correlation context, and
+   correlates CORS short-circuit responses. The affected focused gate passed
+   51 tests in 1.69 seconds before the final full regression run.
 
 ## Full Test and Ruff Results
 
 Executed on the Docker test target based on Python `3.12.13`:
 
 ```text
-docker run --rm cctv-phase1-test pytest -q
-140 passed, 2 warnings in 3.02s
+docker run --rm cctv-api-test pytest -q
+144 passed, 2 warnings in 3.30s
 exit 0
 
-docker run --rm cctv-phase1-test ruff check .
+docker run --rm cctv-api-test ruff check app tests alembic examples
 All checks passed!
 exit 0
 ```
@@ -131,11 +140,11 @@ Dashboard verification in the built Node image:
 
 ```text
 npm test
-6 passed, 0 failed
+6 passed, 0 failed in 0.64s
 
 npm run build
 952 modules transformed
-build completed in 2.48s
+build completed in 5.36s
 ```
 
 Vite emitted one non-blocking warning for a 519.55 kB minified JavaScript
@@ -177,15 +186,21 @@ ready -> 503
 
 After PostgreSQL restart, readiness recovered to 200 on the first retry.
 
-Final `docker compose stop` completed in 4.26 seconds. API, dashboard, and
+Final `docker compose stop` completed in 4.11 seconds. API, dashboard, and
 PostgreSQL all exited with code 0. The API reported `OOMKilled=false`, logged
 camera-runtime completion, and logged application shutdown completion.
+
+The final production image was also run with networking disabled. As UID
+`10001`, it loaded the default YOLO model on CPU and the pretrained OSNet model
+on CPU from bundled files. No runtime model download or application-directory
+write was attempted.
 
 ## Correlation and Logging Security Result
 
 Regression tests verify generated and accepted correlation IDs, invalid-ID
 replacement, concurrent context isolation, context cleanup, HTTP response
-headers, error bodies, and WebSocket lifecycle isolation.
+headers, CORS preflight responses, error bodies, WebSocket authentication
+rejection, unexpected WebSocket failures, and lifecycle isolation.
 
 The final source scans found zero prohibited public snapshot/storage-path
 patterns. A runtime fixture passed a synthetic bearer token, RTSP password,
@@ -203,6 +218,8 @@ All four secret values were absent from the result.
 - Success resets the identifier bucket.
 - Expired attempts are pruned.
 - Concurrent attempts cannot bypass the configured bound.
+- In-flight password evaluations are reserved atomically and cannot be evicted
+  when the limiter reaches its global bounded capacity.
 - The process-local limitation is documented and accepted for one API replica.
 
 ## Non-root and Storage-Write Result
@@ -231,8 +248,8 @@ migration:
 5. verify the legacy health endpoint, login, dashboard, and camera runtime.
 
 Do not use `docker compose down -v`; PostgreSQL and evidence volumes must be
-preserved. If rolling back only the camera shutdown fix, revert `02e07db` and
-remove only the two camera timeout variables that were added for that commit.
+preserved. If rolling back only the final production fixes, revert `e6a5dfe`;
+if also reverting the original camera I/O bound, revert `02e07db`.
 
 ## Deferred Work
 
@@ -249,8 +266,11 @@ remove only the two camera timeout variables that were added for that commit.
 - Structured logs still depend on the server's external collection and
   retention policy.
 - Readiness intentionally does not fail for an offline camera.
-- A native camera operation can delay shutdown up to its configured bounded
-  timeout, while the 30-second container grace period provides cleanup margin.
+- Camera open/read and manager cleanup are bounded to at most 30 seconds, while
+  the 45-second container grace period provides cleanup margin. A third-party
+  native inference call that hangs below Python cannot be forcibly interrupted
+  safely in-process; process-isolated AI workers remain the future hard-kill
+  boundary for that exceptional hardware/runtime failure.
 - The dashboard production bundle exceeds Vite's default 500 kB advisory
   threshold.
 - Two upstream framework deprecation warnings remain in the test output.
