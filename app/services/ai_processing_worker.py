@@ -30,11 +30,13 @@ from app.models import (
 from app.repository import AIJobRepository, BiometricRepository
 from app.repository import BodyAnalysisRepository
 from app.repository import JourneyRepository
+from app.repository import OccupancyRepository
 from app.services.biometric_identity_service import BiometricIdentityService
 from app.services.body_analysis_service import BodyAnalysisService
 from app.services.journey_correlation_service import (
     JourneyCorrelationService,
 )
+from app.services.occupancy_service import OccupancyService
 
 
 class RetryableJobError(RuntimeError):
@@ -301,6 +303,43 @@ class JourneyCorrelationHandler:
                 if result.needs_review
                 else CaptureEventStatus.COMPLETED
             ),
+            next_job_type=AIJobType.OCCUPANCY_UPDATE,
+            next_payload={"capture_event_id": str(job.capture_event_id)},
+        )
+
+
+class OccupancyUpdateHandler:
+    def __init__(self, session_factory: Any, settings: Any) -> None:
+        self._session_factory = session_factory
+        self._settings = settings
+
+    async def handle(self, job: AIProcessingJob) -> HandlerResult:
+        try:
+            async with self._session_factory() as session:
+                result = await OccupancyService(
+                    OccupancyRepository(session),
+                    self._settings,
+                ).process_capture(job.capture_event_id)
+        except (LookupError, ValueError) as error:
+            raise PermanentJobError(str(error)) from error
+        return HandlerResult(
+            result={
+                "stage": "OCCUPANCY_UPDATE",
+                "occupancy_fact_id": str(result.fact.id),
+                "current_session_id": (
+                    str(result.current_session.id)
+                    if result.current_session
+                    else None
+                ),
+                "session_count": result.session_count,
+                "active_count": result.active_count,
+                "needs_review": result.needs_review,
+            },
+            capture_status=(
+                CaptureEventStatus.NEED_REVIEW
+                if result.needs_review
+                else CaptureEventStatus.COMPLETED
+            ),
         )
 
 
@@ -325,6 +364,9 @@ class AIJobHandlerRegistry:
                 session_factory, settings, body_engine
             ),
             AIJobType.JOURNEY_CORRELATION: JourneyCorrelationHandler(
+                session_factory, settings
+            ),
+            AIJobType.OCCUPANCY_UPDATE: OccupancyUpdateHandler(
                 session_factory, settings
             ),
         }

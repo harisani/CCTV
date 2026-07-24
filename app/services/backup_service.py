@@ -43,6 +43,8 @@ from app.models import (
     JourneyCorrelation,
     JourneyEvent,
     ModelVersion,
+    OccupancyFact,
+    OccupancySession,
     Person,
     PPEAnalysis,
     PresenceSession,
@@ -57,7 +59,7 @@ from app.models import (
 from app.repository import AuditRepository, BackupRepository
 
 ARCHIVE_FORMAT = "cctv-people-flow-observational-backup"
-ARCHIVE_SCHEMA_VERSION = 9
+ARCHIVE_SCHEMA_VERSION = 10
 ARCHIVE_ENTITIES_V1 = frozenset(
     {"cameras", "persons", "trackings", "events", "snapshots", "users", "audit_logs"}
 )
@@ -87,10 +89,14 @@ ARCHIVE_ENTITIES_V8 = ARCHIVE_ENTITIES_V7 | {
     "body_embeddings",
     "ppe_analyses",
 }
-ARCHIVE_ENTITIES = ARCHIVE_ENTITIES_V8 | {
+ARCHIVE_ENTITIES_V9 = ARCHIVE_ENTITIES_V8 | {
     "global_journeys",
     "journey_events",
     "journey_correlations",
+}
+ARCHIVE_ENTITIES = ARCHIVE_ENTITIES_V9 | {
+    "occupancy_facts",
+    "occupancy_sessions",
 }
 _backup_lock = asyncio.Lock()
 
@@ -313,7 +319,8 @@ class ArchiveCodec:
             6: ARCHIVE_ENTITIES_V6,
             7: ARCHIVE_ENTITIES_V7,
             8: ARCHIVE_ENTITIES_V8,
-            9: ARCHIVE_ENTITIES,
+            9: ARCHIVE_ENTITIES_V9,
+            10: ARCHIVE_ENTITIES,
         }[schema_version]
         for entity in required_entities:
             member = f"data/{entity}.jsonl"
@@ -833,6 +840,31 @@ class BackupService:
                 )
             ).all()
         )
+        occupancy_facts = list(
+            (
+                await session.scalars(
+                    select(OccupancyFact)
+                    .where(
+                        OccupancyFact.occurred_at >= start_at,
+                        OccupancyFact.occurred_at < end_at,
+                    )
+                    .order_by(OccupancyFact.occurred_at)
+                )
+            ).all()
+        )
+        occupancy_sessions = list(
+            (
+                await session.scalars(
+                    select(OccupancySession)
+                    .where(
+                        OccupancySession.entered_at < end_at,
+                        (OccupancySession.exited_at.is_(None))
+                        | (OccupancySession.exited_at >= start_at),
+                    )
+                    .order_by(OccupancySession.entered_at)
+                )
+            ).all()
+        )
         biometric_templates = list(
             (
                 await session.scalars(
@@ -1010,6 +1042,12 @@ class BackupService:
             ],
             "journey_correlations": [
                 _model_record(item) for item in journey_correlations
+            ],
+            "occupancy_facts": [
+                _model_record(item) for item in occupancy_facts
+            ],
+            "occupancy_sessions": [
+                _model_record(item) for item in occupancy_sessions
             ],
             "zone_events": [_model_record(item) for item in zone_events],
             "presence_sessions": [_model_record(item) for item in presence_sessions],

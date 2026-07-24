@@ -15,6 +15,7 @@ from app.repository import (
     DisasterRecoveryRepository,
     EventRepository,
     JourneyRepository,
+    OccupancyRepository,
     PersonRepository,
     SnapshotRepository,
     StatisticsRepository,
@@ -31,6 +32,7 @@ from app.services.body_analysis_service import BodyAnalysisService
 from app.services.journey_correlation_service import (
     JourneyCorrelationService,
 )
+from app.services.occupancy_service import OccupancyService
 from app.services.login_rate_limiter import LoginRateLimiter
 from app.services.topology_service import TopologyService
 from app.services.zone_transition_service import ZoneTransitionService
@@ -137,6 +139,14 @@ async def get_journey_correlation_service(
 ) -> AsyncGenerator[JourneyCorrelationService, None]:
     """Provide global journey correlation and observation queries."""
     yield JourneyCorrelationService(JourneyRepository(session), settings)
+
+
+async def get_occupancy_service(
+    settings: Settings = Depends(get_app_settings),
+    session: AsyncSession = Depends(get_database_session),
+) -> AsyncGenerator[OccupancyService, None]:
+    """Provide Phase 9 occupancy reconstruction and queries."""
+    yield OccupancyService(OccupancyRepository(session), settings)
 
 
 async def get_zone_transition_service(

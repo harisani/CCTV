@@ -53,6 +53,7 @@ class JourneyObservation:
     body_embedding: Sequence[float] | None
     body_model_version_id: UUID | None
     dominant_color: str | None
+    source_event_type: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -448,7 +449,20 @@ class JourneyCorrelationService:
         destination = self._uuid(
             metadata.get("destination_zone_id")
         )
-        current_zone = destination or capture.zone_id
+        source_event_type = (
+            str(metadata.get("event_type")).upper()
+            if metadata.get("event_type")
+            else None
+        )
+        current_zone = (
+            None
+            if (
+                source_event_type == "EXIT"
+                and origin is not None
+                and destination is None
+            )
+            else destination or capture.zone_id
+        )
         color = None
         if ppe and ppe.color_observation:
             raw_color = ppe.color_observation.get("dominant_color")
@@ -467,6 +481,7 @@ class JourneyCorrelationService:
                 body.model_version_id if body else None
             ),
             dominant_color=color,
+            source_event_type=source_event_type,
         )
 
     @staticmethod
@@ -615,6 +630,7 @@ class JourneyCorrelationService:
                 "body_embedding_available": (
                     observation.body_embedding is not None
                 ),
+                "source_event_type": observation.source_event_type,
             },
         )
 

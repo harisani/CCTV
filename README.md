@@ -77,6 +77,9 @@ scrypt di PostgreSQL, bukan kembali ke `.env`.
 - Phase 8 correlates captures by event time into auditable global journeys.
   Identity conflicts and physically impossible routes never merge; ambiguous
   observations become separate journeys requiring review.
+- Phase 9 reconstructs zone occupancy from immutable journey facts. Camera
+  outages change a session to `TEMPORARILY_LOST`; they never synthesize an EXIT
+  or erase the historical session.
 - Snapshot list responses expose stable snapshot/event IDs, bounding boxes, and
   timestamps only. Server filesystem paths for images and metadata remain
   internal persistence details and are never part of the public API contract.
@@ -118,7 +121,8 @@ storage/backups/YYYY/MM/YYYYMMDD_<uuid>.zip
 
 ZIP memuat `manifest.json`, dataset JSON Lines, snapshot lama, capture event,
 evidence asset, kandidat wajah/periocular/full-body, observasi APD, hasil
-identity matching, global journey, journey event, dan correlation evidence.
+identity matching, global journey, journey event, correlation evidence,
+occupancy fact, dan occupancy session.
 Embedding referensi tidak dimasukkan ke backup
 observasional; embedding tetap tersedia dalam backup DR terenkripsi. Setiap
 member memiliki checksum SHA-256. File dibuat secara atomik;
@@ -301,6 +305,53 @@ Correlation decision diserialisasi singkat dengan PostgreSQL advisory lock.
 Lock hanya mencakup event crossing, bukan frame/video inference, dan candidate
 anchor diambil secara batch agar keputusan concurrent tidak membuat duplicate
 journey.
+
+## Phase 9: Structured occupancy engine
+
+`OCCUPANCY_UPDATE` berjalan setelah `JOURNEY_CORRELATION`. Setiap journey event
+diubah menjadi immutable occupancy fact, kemudian seluruh fact journey disusun
+ulang menurut event time. Pendekatan ini menjaga hasil benar ketika job dari
+dua kamera selesai tidak berurutan.
+
+Satu occupancy session mewakili keberadaan satu journey dalam satu zona dan
+menyimpan subject type, person/unknown, entry/exit event, first/last seen,
+identity confidence, state, serta review status.
+
+State:
+
+```text
+ACTIVE
+TEMPORARILY_LOST
+STALE
+EXITED
+NEED_REVIEW
+MANUALLY_CLOSED
+```
+
+Aturan penting:
+
+- kamera offline mengubah `ACTIVE → TEMPORARILY_LOST`, bukan `EXITED`;
+- session keluar hanya karena zone exit valid atau entry terkorrelasi ke zona
+  tetangga;
+- event EXIT tanpa session terbuka tidak membuat occupancy negatif;
+- retry tidak menggandakan fact/session;
+- event terlambat memicu reconstruction deterministik;
+- summary `active_total` hanya menghitung state `ACTIVE`.
+
+Rekonsiliasi tengah malam lama tetap hanya menyentuh tabel kompatibilitas
+`presence_sessions`; structured `occupancy_sessions` tidak ditutup otomatis.
+Kartu “orang terlihat sekarang” pada dashboard lama masih berasal dari live
+camera visibility. Phase 11 akan menampilkan live visibility dan structured
+occupancy sebagai dua metrik yang jelas agar tidak tercampur.
+
+Endpoint JWT:
+
+```text
+GET /api/v1/occupancy/configuration
+GET /api/v1/occupancy/summary
+GET /api/v1/occupancy/sessions
+GET /api/v1/occupancy/facts
+```
 
 ## Disaster Recovery penuh
 

@@ -23,6 +23,8 @@ from app.models import (
     EvidenceIntegrityStatus,
     Event,
     EventType,
+    OccupancySession,
+    OccupancySessionState,
     PresenceSession,
     PresenceStatus,
     ProcessingPriority,
@@ -645,6 +647,19 @@ class PipelineRepository:
                 .values(
                     status=PresenceStatus.UNCERTAIN,
                     uncertain_since=timestamp,
+                    updated_at=timestamp,
+                )
+            )
+            await session.execute(
+                update(OccupancySession)
+                .where(
+                    OccupancySession.last_camera_id == camera_id,
+                    OccupancySession.state
+                    == OccupancySessionState.ACTIVE,
+                )
+                .values(
+                    state=OccupancySessionState.TEMPORARILY_LOST,
+                    state_reason="CAMERA_OFFLINE",
                     updated_at=timestamp,
                 )
             )

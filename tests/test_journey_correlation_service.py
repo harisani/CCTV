@@ -116,6 +116,7 @@ def _observation(
         body_embedding=None,
         body_model_version_id=None,
         dominant_color="BLUE",
+        source_event_type=None,
     )
 
 

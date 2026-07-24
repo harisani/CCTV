@@ -135,6 +135,28 @@ class JourneyCorrelationDecision(StrEnum):
     IMPOSSIBLE_TRAVEL = "IMPOSSIBLE_TRAVEL"
 
 
+class OccupancySubjectType(StrEnum):
+    EMPLOYEE = "EMPLOYEE"
+    UNKNOWN = "UNKNOWN"
+    UNRESOLVED = "UNRESOLVED"
+
+
+class OccupancySessionState(StrEnum):
+    ACTIVE = "ACTIVE"
+    TEMPORARILY_LOST = "TEMPORARILY_LOST"
+    STALE = "STALE"
+    EXITED = "EXITED"
+    NEED_REVIEW = "NEED_REVIEW"
+    MANUALLY_CLOSED = "MANUALLY_CLOSED"
+
+
+class OccupancyFactType(StrEnum):
+    ENTER = "ENTER"
+    EXIT = "EXIT"
+    TRANSITION = "TRANSITION"
+    OBSERVATION = "OBSERVATION"
+
+
 class PresenceStatus(StrEnum):
     ACTIVE = "ACTIVE"
     UNCERTAIN = "UNCERTAIN"
@@ -1100,6 +1122,154 @@ class JourneyCorrelation(Base):
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.utcnow
+    )
+
+
+class OccupancyFact(Base):
+    """Immutable journey-derived input for the occupancy projection."""
+
+    __tablename__ = "occupancy_facts"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    idempotency_key: Mapped[str] = mapped_column(
+        String(200), unique=True, index=True
+    )
+    journey_id: Mapped[UUID] = mapped_column(
+        ForeignKey("global_journeys.id", ondelete="CASCADE"), index=True
+    )
+    journey_event_id: Mapped[UUID] = mapped_column(
+        ForeignKey("journey_events.id", ondelete="CASCADE"),
+        unique=True,
+        index=True,
+    )
+    camera_id: Mapped[UUID] = mapped_column(
+        ForeignKey("cameras.id", ondelete="RESTRICT"), index=True
+    )
+    origin_zone_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("zones.id", ondelete="RESTRICT"), index=True
+    )
+    destination_zone_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("zones.id", ondelete="RESTRICT"), index=True
+    )
+    current_zone_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("zones.id", ondelete="RESTRICT"), index=True
+    )
+    fact_type: Mapped[OccupancyFactType] = mapped_column(
+        Enum(OccupancyFactType, name="occupancy_fact_type"), index=True
+    )
+    subject_type: Mapped[OccupancySubjectType] = mapped_column(
+        Enum(OccupancySubjectType, name="occupancy_subject_type"),
+        index=True,
+    )
+    person_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("persons.id", ondelete="SET NULL"), index=True
+    )
+    external_subject_key: Mapped[str | None] = mapped_column(
+        String(160), index=True
+    )
+    identity_decision: Mapped[IdentityDecision] = mapped_column(
+        Enum(IdentityDecision, name="identity_decision"), index=True
+    )
+    identity_confidence: Mapped[float] = mapped_column(Float)
+    correlation_decision: Mapped[JourneyCorrelationDecision] = mapped_column(
+        Enum(
+            JourneyCorrelationDecision,
+            name="journey_correlation_decision",
+        ),
+        index=True,
+    )
+    correlation_score: Mapped[float] = mapped_column(Float)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
+    fact_metadata: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow
+    )
+
+
+class OccupancySession(Base):
+    """Mutable projection reconstructed from immutable occupancy facts."""
+
+    __tablename__ = "occupancy_sessions"
+    __table_args__ = (
+        CheckConstraint(
+            "last_seen_at >= entered_at",
+            name="ck_occupancy_session_last_seen",
+        ),
+        CheckConstraint(
+            "exited_at IS NULL OR exited_at >= entered_at",
+            name="ck_occupancy_session_exit_time",
+        ),
+        CheckConstraint(
+            "identification_confidence BETWEEN 0 AND 1",
+            name="ck_occupancy_session_identity_confidence",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    journey_id: Mapped[UUID] = mapped_column(
+        ForeignKey("global_journeys.id", ondelete="CASCADE"), index=True
+    )
+    zone_id: Mapped[UUID] = mapped_column(
+        ForeignKey("zones.id", ondelete="RESTRICT"), index=True
+    )
+    subject_type: Mapped[OccupancySubjectType] = mapped_column(
+        Enum(OccupancySubjectType, name="occupancy_subject_type"),
+        index=True,
+    )
+    person_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("persons.id", ondelete="SET NULL"), index=True
+    )
+    external_subject_key: Mapped[str | None] = mapped_column(
+        String(160), index=True
+    )
+    entry_journey_event_id: Mapped[UUID] = mapped_column(
+        ForeignKey("journey_events.id", ondelete="RESTRICT"),
+        unique=True,
+        index=True,
+    )
+    exit_journey_event_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("journey_events.id", ondelete="SET NULL"), index=True
+    )
+    last_journey_event_id: Mapped[UUID] = mapped_column(
+        ForeignKey("journey_events.id", ondelete="RESTRICT"), index=True
+    )
+    last_camera_id: Mapped[UUID] = mapped_column(
+        ForeignKey("cameras.id", ondelete="RESTRICT"), index=True
+    )
+    state: Mapped[OccupancySessionState] = mapped_column(
+        Enum(OccupancySessionState, name="occupancy_session_state"),
+        index=True,
+    )
+    identity_decision: Mapped[IdentityDecision] = mapped_column(
+        Enum(IdentityDecision, name="identity_decision"), index=True
+    )
+    identification_confidence: Mapped[float] = mapped_column(Float)
+    review_status: Mapped[IdentityReviewStatus] = mapped_column(
+        Enum(IdentityReviewStatus, name="identity_review_status"),
+        index=True,
+    )
+    entered_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
+    exited_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
+    state_reason: Mapped[str] = mapped_column(String(160))
+    reconstruction_version: Mapped[int] = mapped_column(
+        Integer, default=1
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
     )
 
 
