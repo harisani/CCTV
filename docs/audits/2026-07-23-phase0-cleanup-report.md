@@ -69,9 +69,6 @@ fresh verification gate:
 - Git whitespace validation: clean.
 - Source scan: no evidence token in a query URL, no `snapshot_url`, and no
   public `/storage/` reference in dashboard/API/service/repository source.
-- Public snapshot contract scan: no `image_path` or `metadata_path` field in
-  the snapshot route or API response schema.
-
 ## Final Re-review Addendum Gate
 
 A final 2026-07-24 contract re-review found and removed two internal
