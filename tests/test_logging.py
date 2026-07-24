@@ -59,10 +59,46 @@ def test_redaction_preserves_exact_key_lookalikes() -> None:
     value = (
         "tokenizer: wordpiece passwordless=enabled "
         "vector_count: [1, 2] secretary='Alice' "
-        "diagnostic=https://cctv.example/health?tokenizer=wordpiece"
+        "diagnostic=https://cctv.example/health?"
+        "tokenizer=wordpiece&passwordless=enabled&vector_count=2&secretary=Alice"
     )
 
     assert redact_sensitive(value) == value
+
+
+def test_redaction_removes_project_specific_sensitive_suffixes() -> None:
+    value = (
+        "payload={'api_admin_password': 'admin-value', "
+        "'dr_encryption_passphrase': 'recovery-value', "
+        "'evidence_signing_secret': 'signing-value', "
+        "'evidence_access_token': 'access-value'} "
+        "api admin password: spaced-admin-value "
+        "backup credential=backup-value "
+        "model embedding: [0.101, -0.202] "
+        "tracking_vector: (0.303, -0.404) "
+        "callback=https://cctv.example/callback?"
+        "view=summary&evidence_access_token=query-value "
+        "admin=https://cctv.example/admin?api_key=api-key-value"
+    )
+
+    redacted = redact_sensitive(value)
+
+    for sensitive_value in (
+        "admin-value",
+        "recovery-value",
+        "signing-value",
+        "access-value",
+        "spaced-admin-value",
+        "backup-value",
+        "0.101",
+        "-0.202",
+        "0.303",
+        "-0.404",
+        "query-value",
+        "api-key-value",
+    ):
+        assert sensitive_value not in redacted
+    assert "cctv.example" not in redacted
 
 
 def test_redaction_removes_sensitive_urls_and_evidence_paths() -> None:
@@ -265,6 +301,12 @@ def test_configured_json_logging_redacts_nested_sensitive_values(capsys) -> None
                 "postgres_password": "nested-secret",
                 "reid_embedding": [0.12, -0.08],
             },
+            "configuration": {
+                "api_admin_password": "admin-config",
+                "dr_encryption_passphrase": "recovery-config",
+                "evidence_signing_secret": "signing-config",
+                "evidence_access_token": "access-config",
+            },
             "metrics": {"samples": [1, 2, 3]},
             "diagnostics": {
                 "tokenizer": "osnet",
@@ -276,7 +318,8 @@ def test_configured_json_logging_redacts_nested_sensitive_values(capsys) -> None
         try:
             raise RuntimeError(
                 "worker failed: Bearer exception-bearer "
-                "ReID result array([0.7, -0.8])"
+                "ReID result array([0.7, -0.8]) "
+                "evidence_signing_secret: exception-signing"
             )
         except RuntimeError:
             logging.getLogger("phase1-json-redaction-test").exception(
@@ -297,6 +340,11 @@ def test_configured_json_logging_redacts_nested_sensitive_values(capsys) -> None
         "nested-secret",
         "exception-bearer",
         "message-secret",
+        "admin-config",
+        "recovery-config",
+        "signing-config",
+        "access-config",
+        "exception-signing",
         "0.12",
         "-0.08",
         "0.31",
@@ -325,6 +373,12 @@ def test_configured_text_logging_redacts_nested_sensitive_values(capsys) -> None
                 "postgres_password": "nested-secret",
                 "reid_embedding": [0.12, -0.08],
             },
+            "configuration": {
+                "api_admin_password": "admin-config",
+                "dr_encryption_passphrase": "recovery-config",
+                "evidence_signing_secret": "signing-config",
+                "evidence_access_token": "access-config",
+            },
             "metrics": {"samples": [1, 2, 3]},
             "diagnostics": {
                 "tokenizer": "osnet",
@@ -336,7 +390,8 @@ def test_configured_text_logging_redacts_nested_sensitive_values(capsys) -> None
         try:
             raise RuntimeError(
                 "worker failed: Bearer exception-bearer "
-                "ReID result array([0.7, -0.8])"
+                "ReID result array([0.7, -0.8]) "
+                "evidence_signing_secret: exception-signing"
             )
         except RuntimeError:
             logging.getLogger("phase1-text-redaction-test").exception(
@@ -355,6 +410,11 @@ def test_configured_text_logging_redacts_nested_sensitive_values(capsys) -> None
         "nested-secret",
         "exception-bearer",
         "message-secret",
+        "admin-config",
+        "recovery-config",
+        "signing-config",
+        "access-config",
+        "exception-signing",
         "0.12",
         "-0.08",
         "0.31",

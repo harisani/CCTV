@@ -46,14 +46,30 @@ _SENSITIVE_KEYS = frozenset(
         "vectors",
     }
 )
-_SENSITIVE_LABEL_KEY_PATTERN = "(?:" + "|".join(
+_SENSITIVE_SUFFIXES = (
+    "_credential",
+    "_embedding",
+    "_passphrase",
+    "_password",
+    "_secret",
+    "_token",
+    "_vector",
+)
+_SENSITIVE_SUFFIX_NAME_PATTERN = (
+    r"(?:credential|embedding|passphrase|password|secret|token|vector)"
+)
+_EXACT_SENSITIVE_LABEL_KEY_PATTERN = "(?:" + "|".join(
     re.escape(key).replace("_", r"[\s_-]+")
     for key in sorted(_SENSITIVE_KEYS, key=len, reverse=True)
 ) + ")"
-_SENSITIVE_QUERY_KEY_PATTERN = "(?:" + "|".join(
+_EXACT_SENSITIVE_QUERY_KEY_PATTERN = "(?:" + "|".join(
     re.escape(key).replace("_", "[_-]")
     for key in sorted(_SENSITIVE_KEYS, key=len, reverse=True)
 ) + ")"
+_SENSITIVE_QUERY_KEY_PATTERN = (
+    rf"(?:(?:[A-Za-z0-9]+[_-]+)*{_SENSITIVE_SUFFIX_NAME_PATTERN}|"
+    rf"{_EXACT_SENSITIVE_QUERY_KEY_PATTERN})"
+)
 _BEARER = re.compile(r"(?i)(\bbearer\s+)[^\s,;]+")
 _CREDENTIAL_URL = re.compile(
     r"(?i)\b(?:https?|rtsp|postgresql(?:\+asyncpg)?):\/\/[^:/@\s]+:[^@\s]+@[^\s,;]+"
@@ -64,7 +80,14 @@ _SENSITIVE_QUERY_URL = re.compile(
 )
 _SENSITIVE_LABEL = re.compile(
     rf"(?i)(?<![A-Za-z0-9_-])(?P<quote>['\"]?)"
-    rf"(?P<key>{_SENSITIVE_LABEL_KEY_PATTERN})(?P=quote)"
+    rf"(?P<key>{_EXACT_SENSITIVE_LABEL_KEY_PATTERN})(?P=quote)"
+    r"(?:\s*[:=]\s*|\s+)"
+)
+_SENSITIVE_SUFFIX_LABEL = re.compile(
+    rf"(?i)(?<![A-Za-z0-9_-])(?:"
+    rf"(?P<suffix_quote>['\"])(?:[A-Za-z0-9]+[\s_-]+)+"
+    rf"{_SENSITIVE_SUFFIX_NAME_PATTERN}(?P=suffix_quote)|"
+    rf"(?:[A-Za-z0-9]+[\s_-]+)+{_SENSITIVE_SUFFIX_NAME_PATTERN})"
     r"(?:\s*[:=]\s*|\s+)"
 )
 _REID_RESULT_LABEL = re.compile(
@@ -90,6 +113,11 @@ _EXTRA_FIELDS = (
 
 def _normalize_key(key: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", key.casefold()).strip("_")
+
+
+def _is_sensitive_key(key: str) -> bool:
+    normalized = _normalize_key(key)
+    return normalized in _SENSITIVE_KEYS or normalized.endswith(_SENSITIVE_SUFFIXES)
 
 
 def _quoted_value_end(value: str, start: int, quote: str) -> int:
@@ -147,13 +175,14 @@ def redact_sensitive(value: str) -> str:
     value = _CREDENTIAL_URL.sub("[REDACTED]", value)
     value = _SENSITIVE_QUERY_URL.sub("[REDACTED]", value)
     value = _redact_labeled_values(value, _SENSITIVE_LABEL)
+    value = _redact_labeled_values(value, _SENSITIVE_SUFFIX_LABEL)
     value = _redact_labeled_values(value, _REID_RESULT_LABEL)
     value = _EVIDENCE_VALUE.sub(r"\1[REDACTED]", value)
     return _EVIDENCE_PATH.sub("[REDACTED]", value)
 
 
 def _sanitize_value(value: Any, *, key: str | None = None) -> Any:
-    if key is not None and _normalize_key(key) in _SENSITIVE_KEYS:
+    if key is not None and _is_sensitive_key(key):
         return "[REDACTED]"
     if isinstance(value, Mapping):
         return {
