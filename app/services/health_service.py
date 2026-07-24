@@ -18,6 +18,6 @@ class HealthService:
         try:
             async with asyncio.timeout(timeout_seconds):
                 await session.execute(text("SELECT 1"))
-        except (SQLAlchemyError, TimeoutError):
+        except (OSError, SQLAlchemyError, TimeoutError):
             return False
         return True
