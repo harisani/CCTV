@@ -10,6 +10,7 @@ from app.repository.person_repository import PersonRepository
 from app.repository.pipeline_repository import PipelineRepository
 from app.repository.snapshot_repository import SnapshotRepository
 from app.repository.statistics_repository import StatisticsRepository
+from app.repository.topology_repository import TopologyRepository
 from app.repository.user_repository import UserRepository
 
 __all__ = [
@@ -23,5 +24,6 @@ __all__ = [
     "PipelineRepository",
     "SnapshotRepository",
     "StatisticsRepository",
+    "TopologyRepository",
     "UserRepository",
 ]

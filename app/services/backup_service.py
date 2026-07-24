@@ -26,22 +26,36 @@ from app.models import (
     BackupArchive,
     BackupSource,
     BackupStatus,
+    Building,
     Camera,
+    CameraRole,
+    CameraZoneMapping,
     Event,
     Person,
     PresenceSession,
     Snapshot,
     Tracking,
     User,
+    VirtualLine,
+    Zone,
+    ZoneAdjacency,
 )
 from app.repository import AuditRepository, BackupRepository
 
 ARCHIVE_FORMAT = "cctv-people-flow-observational-backup"
-ARCHIVE_SCHEMA_VERSION = 2
+ARCHIVE_SCHEMA_VERSION = 3
 ARCHIVE_ENTITIES_V1 = frozenset(
     {"cameras", "persons", "trackings", "events", "snapshots", "users", "audit_logs"}
 )
-ARCHIVE_ENTITIES = ARCHIVE_ENTITIES_V1 | {"presence_sessions"}
+ARCHIVE_ENTITIES_V2 = ARCHIVE_ENTITIES_V1 | {"presence_sessions"}
+ARCHIVE_ENTITIES = ARCHIVE_ENTITIES_V2 | {
+    "buildings",
+    "zones",
+    "camera_roles",
+    "camera_zone_mappings",
+    "zone_adjacencies",
+    "virtual_lines",
+}
 _backup_lock = asyncio.Lock()
 
 
@@ -217,7 +231,7 @@ class ArchiveCodec:
         if manifest.get("format") != ARCHIVE_FORMAT:
             raise ValueError("Archive format is not supported")
         schema_version = manifest.get("schema_version")
-        if schema_version not in {1, ARCHIVE_SCHEMA_VERSION}:
+        if schema_version not in {1, 2, ARCHIVE_SCHEMA_VERSION}:
             raise ValueError("Archive schema version is not supported")
         try:
             date.fromisoformat(manifest["backup_date"])
@@ -251,7 +265,11 @@ class ArchiveCodec:
         counts = manifest.get("record_counts")
         if not isinstance(counts, dict):
             raise ValueError("Archive record counts are missing")
-        required_entities = ARCHIVE_ENTITIES if schema_version == 2 else ARCHIVE_ENTITIES_V1
+        required_entities = {
+            1: ARCHIVE_ENTITIES_V1,
+            2: ARCHIVE_ENTITIES_V2,
+            3: ARCHIVE_ENTITIES,
+        }[schema_version]
         for entity in required_entities:
             member = f"data/{entity}.jsonl"
             if member not in declared_names or not isinstance(counts.get(entity), int):
@@ -508,6 +526,51 @@ class BackupService:
         session = self.repository.session
 
         cameras = list((await session.scalars(select(Camera).order_by(Camera.name))).all())
+        buildings = list(
+            (await session.scalars(select(Building).order_by(Building.name))).all()
+        )
+        zones = list(
+            (
+                await session.scalars(
+                    select(Zone).order_by(Zone.building_id, Zone.name)
+                )
+            ).all()
+        )
+        camera_roles = list(
+            (
+                await session.scalars(
+                    select(CameraRole).order_by(CameraRole.camera_id, CameraRole.role)
+                )
+            ).all()
+        )
+        camera_zone_mappings = list(
+            (
+                await session.scalars(
+                    select(CameraZoneMapping).order_by(
+                        CameraZoneMapping.camera_id, CameraZoneMapping.zone_id
+                    )
+                )
+            ).all()
+        )
+        zone_adjacencies = list(
+            (
+                await session.scalars(
+                    select(ZoneAdjacency).order_by(
+                        ZoneAdjacency.source_zone_id,
+                        ZoneAdjacency.target_zone_id,
+                    )
+                )
+            ).all()
+        )
+        virtual_lines = list(
+            (
+                await session.scalars(
+                    select(VirtualLine).order_by(
+                        VirtualLine.camera_id, VirtualLine.display_order
+                    )
+                )
+            ).all()
+        )
         event_filter = (Event.occurred_at >= start_at, Event.occurred_at < end_at)
         events = list(
             (
@@ -596,7 +659,17 @@ class BackupService:
             snapshot_records.append(record)
 
         records = {
+            "buildings": [_model_record(item) for item in buildings],
+            "zones": [_model_record(item) for item in zones],
             "cameras": [_model_record(item, excluded={"rtsp_url"}) for item in cameras],
+            "camera_roles": [_model_record(item) for item in camera_roles],
+            "camera_zone_mappings": [
+                _model_record(item) for item in camera_zone_mappings
+            ],
+            "zone_adjacencies": [
+                _model_record(item) for item in zone_adjacencies
+            ],
+            "virtual_lines": [_model_record(item) for item in virtual_lines],
             "persons": [_model_record(item, excluded={"reid_embedding"}) for item in persons],
             "trackings": [_model_record(item) for item in trackings],
             "events": [_model_record(item) for item in events],

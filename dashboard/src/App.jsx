@@ -340,14 +340,15 @@ function App() {
 
   const loadCameras = useCallback(async () => {
     if (!token) return
-    const page = await api('/camera?limit=200', token)
-    setCameras(page.items)
-    const validIds = new Set(page.items.filter(camera => camera.enabled).map(camera => camera.id))
+    const cameraPage = await api('/camera?limit=200', token)
+    if (localStorage.getItem('cctv-token') !== token) return
+    setCameras(cameraPage.items)
+    const validIds = new Set(cameraPage.items.filter(camera => camera.enabled).map(camera => camera.id))
     setSelectedIds(current => {
       const valid = current.filter(id => validIds.has(id)).slice(0, gridSize)
       if (valid.length || initializedSelection.current) return valid
       initializedSelection.current = true
-      return page.items.filter(camera => camera.enabled).slice(0, gridSize).map(camera => camera.id)
+      return cameraPage.items.filter(camera => camera.enabled).slice(0, gridSize).map(camera => camera.id)
     })
   }, [token, gridSize])
 
@@ -359,6 +360,7 @@ function App() {
       api('/statistics', token),
       api(`/events?offset=${offset}&limit=${rowsPerPage}${dateQuery}`, token),
     ])
+    if (localStorage.getItem('cctv-token') !== token) return
     setStats(summary)
     setEvents(eventResult.items)
     setEventTotal(eventResult.total)
@@ -366,9 +368,21 @@ function App() {
 
   useEffect(() => {
     if (!token) return undefined
-    Promise.all([loadCameras(), loadDashboard(), api('/auth/me', token).then(setCurrentUser)]).catch(err => setError(err.message))
+    Promise.all([
+      loadCameras(),
+      loadDashboard(),
+      api('/auth/me', token).then(user => {
+        if (localStorage.getItem('cctv-token') === token) setCurrentUser(user)
+      }),
+    ]).then(() => {
+      if (localStorage.getItem('cctv-token') === token) setError('')
+    }).catch(err => {
+      if (localStorage.getItem('cctv-token') === token) setError(err.message)
+    })
     const refresh = window.setInterval(
-      () => Promise.all([loadCameras(), loadDashboard()]).catch(err => setError(err.message)),
+      () => Promise.all([loadCameras(), loadDashboard()]).catch(err => {
+        if (localStorage.getItem('cctv-token') === token) setError(err.message)
+      }),
       30000,
     )
     return () => window.clearInterval(refresh)
@@ -470,6 +484,7 @@ function App() {
 
   const transitionToken = useCallback(value => {
     snapshotManager.invalidate()
+    setError('')
     if (value) localStorage.setItem('cctv-token', value)
     else localStorage.removeItem('cctv-token')
     setToken(value)

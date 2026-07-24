@@ -366,6 +366,18 @@ Kamera yang belum mempunyai konfigurasi masih memakai nilai crossing global
 dari `.env` untuk kompatibilitas dengan instalasi sebelumnya. Setelah konfigurasi
 disimpan dari dashboard, konfigurasi per kamera menjadi sumber utama.
 
+### Topologi fasilitas
+
+Admin dan super admin dapat membuka **Administrasi → Topologi fasilitas** untuk
+mengatur gedung, zona, peran kamera, cakupan kamera, adjacency antarzona, serta
+virtual line. Model terstruktur ini mencegah korelasi kamera menghubungkan
+perjalanan yang secara fisik tidak mungkin.
+
+Konfigurasi lama tetap kompatibel: migration membentuk gedung/zona awal dari
+kolom lokasi kamera, sedangkan virtual line utama tetap disinkronkan ke endpoint
+crossing lama. Detail implementasi dan kontrak API tersedia di
+[`docs/audits/2026-07-24-phase2-topology-report.md`](docs/audits/2026-07-24-phase2-topology-report.md).
+
 ### Okupansi tahan gangguan kamera
 
 Jumlah orang saat ini berasal dari sesi keberadaan yang dibuka oleh event
@@ -400,9 +412,9 @@ app/
 ├── api/          HTTP routes, JWT, schema, DI, dan error handler
 ├── config/       Settings Pydantic dari .env
 ├── database/     Engine dan async SQLAlchemy session
-├── models/       Entitas ORM termasuk Camera, Event, backup, dan katalog DR
-├── repository/   Query per entitas dan transaksi persistence pipeline realtime
-├── services/     Kamera, pipeline AI, crossing, backup/DR, dan scheduler
+├── models/       Entitas ORM termasuk Camera, Event, topology, backup, dan katalog DR
+├── repository/   Query per entitas, topology, dan transaksi pipeline realtime
+├── services/     Kamera, topology, pipeline AI, crossing, backup/DR, dan scheduler
 ├── detector/     Adapter YOLOv11
 ├── tracker/      Adapter ByteTrack + riwayat centroid
 ├── reid/         OSNet/TorchReID dan pencocokan embedding

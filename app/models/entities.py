@@ -7,7 +7,20 @@ from enum import StrEnum
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import BigInteger, Date, JSON, Boolean, DateTime, Enum, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    Date,
+    DateTime,
+    Enum,
+    Float,
+    ForeignKey,
+    Integer,
+    JSON,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from pgvector.sqlalchemy import Vector
 
@@ -31,6 +44,31 @@ class UserRole(StrEnum):
     SUPERVISOR = "SUPERVISOR"
     OPERATOR = "OPERATOR"
     AUDITOR = "AUDITOR"
+
+
+class CameraRoleType(StrEnum):
+    IDENTITY_CAPTURE = "IDENTITY_CAPTURE"
+    TRANSITION = "TRANSITION"
+    OVERVIEW = "OVERVIEW"
+    EVIDENCE = "EVIDENCE"
+
+
+class ZoneSensitivity(StrEnum):
+    STANDARD = "STANDARD"
+    RESTRICTED = "RESTRICTED"
+    CRITICAL = "CRITICAL"
+
+
+class ProcessingPriority(StrEnum):
+    LOW = "LOW"
+    NORMAL = "NORMAL"
+    HIGH = "HIGH"
+
+
+class VirtualLineType(StrEnum):
+    HORIZONTAL = "horizontal"
+    VERTICAL = "vertical"
+    POLYGON = "polygon"
 
 
 class BackupSource(StrEnum):
@@ -131,6 +169,60 @@ class DisasterRecoveryArchive(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class Building(Base):
+    __tablename__ = "buildings"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    code: Mapped[str] = mapped_column(String(50), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(150), unique=True, index=True)
+    address: Mapped[str | None] = mapped_column(Text)
+    timezone: Mapped[str] = mapped_column(String(64), default="Asia/Jakarta")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+    zones: Mapped[list[Zone]] = relationship(
+        back_populates="building", cascade="all, delete-orphan"
+    )
+
+
+class Zone(Base):
+    __tablename__ = "zones"
+    __table_args__ = (UniqueConstraint("building_id", "code", name="uq_zone_building_code"),)
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    building_id: Mapped[UUID] = mapped_column(
+        ForeignKey("buildings.id", ondelete="CASCADE"), index=True
+    )
+    code: Mapped[str] = mapped_column(String(50), index=True)
+    name: Mapped[str] = mapped_column(String(150), index=True)
+    floor_name: Mapped[str | None] = mapped_column(String(80), index=True)
+    area_name: Mapped[str | None] = mapped_column(String(120), index=True)
+    room_name: Mapped[str | None] = mapped_column(String(120), index=True)
+    roi_polygon: Mapped[list[dict[str, float]] | None] = mapped_column(JSON)
+    sensitivity: Mapped[ZoneSensitivity] = mapped_column(
+        Enum(ZoneSensitivity, name="zone_sensitivity"),
+        default=ZoneSensitivity.STANDARD,
+        index=True,
+    )
+    processing_priority: Mapped[ProcessingPriority] = mapped_column(
+        Enum(ProcessingPriority, name="processing_priority"),
+        default=ProcessingPriority.NORMAL,
+        index=True,
+    )
+    retention_days: Mapped[int] = mapped_column(Integer, default=90)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+    building: Mapped[Building] = relationship(back_populates="zones")
+    camera_mappings: Mapped[list[CameraZoneMapping]] = relationship(
+        back_populates="zone", cascade="all, delete-orphan"
+    )
+
+
 class Camera(Base):
     __tablename__ = "cameras"
 
@@ -152,6 +244,124 @@ class Camera(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
     trackings: Mapped[list[Tracking]] = relationship(back_populates="camera", cascade="all, delete-orphan")
     presence_sessions: Mapped[list[PresenceSession]] = relationship(back_populates="camera")
+    roles: Mapped[list[CameraRole]] = relationship(
+        back_populates="camera", cascade="all, delete-orphan"
+    )
+    zone_mappings: Mapped[list[CameraZoneMapping]] = relationship(
+        back_populates="camera", cascade="all, delete-orphan"
+    )
+    virtual_lines: Mapped[list[VirtualLine]] = relationship(
+        back_populates="camera",
+        cascade="all, delete-orphan",
+        order_by="VirtualLine.display_order",
+    )
+
+
+class CameraRole(Base):
+    __tablename__ = "camera_roles"
+    __table_args__ = (UniqueConstraint("camera_id", "role", name="uq_camera_role"),)
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    camera_id: Mapped[UUID] = mapped_column(
+        ForeignKey("cameras.id", ondelete="CASCADE"), index=True
+    )
+    role: Mapped[CameraRoleType] = mapped_column(
+        Enum(CameraRoleType, name="camera_role_type"), index=True
+    )
+    configuration: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+    camera: Mapped[Camera] = relationship(back_populates="roles")
+
+
+class CameraZoneMapping(Base):
+    __tablename__ = "camera_zone_mappings"
+    __table_args__ = (
+        UniqueConstraint("camera_id", "zone_id", name="uq_camera_zone_mapping"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    camera_id: Mapped[UUID] = mapped_column(
+        ForeignKey("cameras.id", ondelete="CASCADE"), index=True
+    )
+    zone_id: Mapped[UUID] = mapped_column(
+        ForeignKey("zones.id", ondelete="CASCADE"), index=True
+    )
+    coverage_polygon: Mapped[list[dict[str, float]] | None] = mapped_column(JSON)
+    is_primary: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+    camera: Mapped[Camera] = relationship(back_populates="zone_mappings")
+    zone: Mapped[Zone] = relationship(back_populates="camera_mappings")
+
+
+class ZoneAdjacency(Base):
+    __tablename__ = "zone_adjacencies"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_zone_id", "target_zone_id", name="uq_zone_adjacency_direction"
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    source_zone_id: Mapped[UUID] = mapped_column(
+        ForeignKey("zones.id", ondelete="CASCADE"), index=True
+    )
+    target_zone_id: Mapped[UUID] = mapped_column(
+        ForeignKey("zones.id", ondelete="CASCADE"), index=True
+    )
+    minimum_travel_seconds: Mapped[float] = mapped_column(Float, default=0.0)
+    maximum_travel_seconds: Mapped[float] = mapped_column(Float, default=300.0)
+    bidirectional: Mapped[bool] = mapped_column(Boolean, default=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+    source_zone: Mapped[Zone] = relationship(foreign_keys=[source_zone_id])
+    target_zone: Mapped[Zone] = relationship(foreign_keys=[target_zone_id])
+
+
+class VirtualLine(Base):
+    __tablename__ = "virtual_lines"
+    __table_args__ = (
+        UniqueConstraint("camera_id", "line_key", name="uq_virtual_line_camera_key"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    camera_id: Mapped[UUID] = mapped_column(
+        ForeignKey("cameras.id", ondelete="CASCADE"), index=True
+    )
+    line_key: Mapped[str] = mapped_column(String(100), index=True)
+    name: Mapped[str] = mapped_column(String(150))
+    line_type: Mapped[VirtualLineType] = mapped_column(
+        Enum(VirtualLineType, name="virtual_line_type"), index=True
+    )
+    position: Mapped[float | None] = mapped_column(Float)
+    points: Mapped[list[dict[str, float]] | None] = mapped_column(JSON)
+    enter_direction: Mapped[str] = mapped_column(String(10))
+    from_zone_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("zones.id", ondelete="SET NULL"), index=True
+    )
+    to_zone_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("zones.id", ondelete="SET NULL"), index=True
+    )
+    is_primary: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    display_order: Mapped[int] = mapped_column(Integer, default=0)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+    camera: Mapped[Camera] = relationship(back_populates="virtual_lines")
+    from_zone: Mapped[Zone | None] = relationship(foreign_keys=[from_zone_id])
+    to_zone: Mapped[Zone | None] = relationship(foreign_keys=[to_zone_id])
 
 
 class Person(Base):

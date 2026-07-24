@@ -17,6 +17,11 @@ from app.api.request_context import (
     reset_correlation_id,
 )
 from app.config.settings import get_settings
+from app.services.topology_service import (
+    TopologyConflictError,
+    TopologyNotFoundError,
+    TopologyValidationError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +79,33 @@ def register_exception_handlers(app: FastAPI) -> None:
         return JSONResponse(
             status_code=status.HTTP_409_CONFLICT,
             content=error_content("Data conflict."),
+        )
+
+    @app.exception_handler(TopologyNotFoundError)
+    async def handle_topology_not_found(
+        _: Request, error: TopologyNotFoundError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content=error_content(str(error)),
+        )
+
+    @app.exception_handler(TopologyConflictError)
+    async def handle_topology_conflict(
+        _: Request, error: TopologyConflictError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content=error_content(str(error)),
+        )
+
+    @app.exception_handler(TopologyValidationError)
+    async def handle_topology_validation(
+        _: Request, error: TopologyValidationError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content=error_content(str(error)),
         )
 
     @app.exception_handler(SQLAlchemyError)

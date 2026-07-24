@@ -4,10 +4,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.settings import Settings, get_settings
 from app.database.session import get_session
-from app.repository import BackupRepository, CameraRepository, DisasterRecoveryRepository, EventRepository, PersonRepository, SnapshotRepository, StatisticsRepository, UserRepository
+from app.repository import (
+    BackupRepository,
+    CameraRepository,
+    DisasterRecoveryRepository,
+    EventRepository,
+    PersonRepository,
+    SnapshotRepository,
+    StatisticsRepository,
+    TopologyRepository,
+    UserRepository,
+)
 from app.services.container import ServiceContainer, get_service_container
 from app.services.health_service import HealthService
 from app.services.login_rate_limiter import LoginRateLimiter
+from app.services.topology_service import TopologyService
 
 
 def get_app_settings() -> Generator[Settings, None, None]:
@@ -59,6 +70,12 @@ async def get_backup_repository() -> AsyncGenerator[BackupRepository, None]:
 async def get_disaster_recovery_repository() -> AsyncGenerator[DisasterRecoveryRepository, None]:
     async for session in get_session():
         yield DisasterRecoveryRepository(session)
+
+
+async def get_topology_service() -> AsyncGenerator[TopologyService, None]:
+    """Provide the topology use-case service with one transaction scope."""
+    async for session in get_session():
+        yield TopologyService(TopologyRepository(session))
 
 
 def get_services() -> Generator[ServiceContainer, None, None]:
