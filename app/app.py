@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.error_handlers import register_exception_handlers
+from app.api.middleware import RequestContextMiddleware
 from app.api.router import api_router
 from app.config.settings import get_settings
 from app.dashboard.realtime import dashboard_hub
@@ -85,11 +86,16 @@ def create_app() -> FastAPI:
     settings.storage_path.mkdir(parents=True, exist_ok=True)
     application = FastAPI(title=settings.app_name, debug=settings.debug, lifespan=lifespan)
     application.add_middleware(
+        RequestContextMiddleware,
+        max_length=settings.correlation_id_max_length,
+    )
+    application.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
-        allow_headers=["Authorization", "Content-Type"],
+        allow_headers=["Authorization", "Content-Type", "X-Correlation-ID"],
+        expose_headers=["X-Correlation-ID"],
     )
     register_exception_handlers(application)
     application.include_router(api_router, prefix="/api/v1")

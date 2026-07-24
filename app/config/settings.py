@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     log_level: str = "INFO"
+    log_format: Literal["auto", "text", "json"] = "auto"
+    correlation_id_max_length: int = Field(default=128, ge=32, le=256)
+    health_database_timeout_seconds: float = Field(default=2.0, gt=0, le=10)
     cors_allowed_origins: str = "http://localhost:5173"
 
     postgres_host: str = "localhost"
@@ -84,6 +87,9 @@ class Settings(BaseSettings):
     api_admin_password: str = Field(repr=False)
     login_max_failed_attempts: int = Field(default=5, gt=0)
     login_lock_minutes: int = Field(default=15, gt=0)
+    login_rate_limit_attempts: int = Field(default=5, gt=0, le=100)
+    login_rate_limit_window_seconds: int = Field(default=60, gt=0, le=3600)
+    login_rate_limit_max_entries: int = Field(default=10_000, gt=0, le=1_000_000)
 
     presence_timezone: str = "Asia/Jakarta"
     presence_reconcile_interval_seconds: float = Field(default=30.0, ge=5)
