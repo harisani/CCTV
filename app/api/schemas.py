@@ -231,8 +231,6 @@ class SnapshotResponse(BaseModel):
 
     id: UUID
     event_id: UUID
-    image_path: str
-    metadata_path: str
     bbox: dict[str, float]
     saved_at: datetime
 

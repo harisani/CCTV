@@ -40,6 +40,9 @@ scrypt di PostgreSQL, bukan kembali ke `.env`.
   in-memory object URL. Evidence tokens never appear in URLs, inherit user
   session revocation through `token_version`, and every grant/view is audited
   with a shared grant ID.
+- Snapshot list responses expose stable snapshot/event IDs, bounding boxes, and
+  timestamps only. Server filesystem paths for images and metadata remain
+  internal persistence details and are never part of the public API contract.
 - Do not delete `storage/`, PostgreSQL volumes, or historical Alembic migrations during source cleanup.
 
 ## User Management dan RBAC

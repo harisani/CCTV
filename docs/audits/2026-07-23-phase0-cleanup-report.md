@@ -35,6 +35,8 @@
   deactivation and session-version changes revoke outstanding grants.
 - Evidence grants and content views are written to `audit_logs` with the same
   non-secret grant ID for correlation.
+- Authenticated snapshot lists expose stable IDs, bounding boxes, and
+  timestamps without serializing internal image or metadata filesystem paths.
 - The unauthenticated `/storage` static mount is removed.
 
 ## Verification Gate at Phase 0 Baseline
@@ -67,6 +69,24 @@ fresh verification gate:
 - Git whitespace validation: clean.
 - Source scan: no evidence token in a query URL, no `snapshot_url`, and no
   public `/storage/` reference in dashboard/API/service/repository source.
+- Public snapshot contract scan: no `image_path` or `metadata_path` field in
+  the snapshot route or API response schema.
+
+## Final Re-review Addendum Gate
+
+A final 2026-07-24 contract re-review found and removed two internal
+filesystem fields from authenticated snapshot-list serialization. The
+follow-up gate passed:
+
+- Backend pytest suite: 83 passed in 1.97 seconds.
+- Ruff 0.15.22: `All checks passed!`.
+- API and dashboard Compose images: build successful.
+- Dashboard lifecycle and transport tests: 6 passed in 98.983459 milliseconds.
+- Dashboard production build: 952 modules transformed and build successful in
+  2.36 seconds; the same bundle-size advisory remains non-failing.
+- Docker Compose configuration and Git whitespace validation: clean.
+- Credential/public-storage scan and the dedicated public snapshot path-field
+  scan: no matches.
 
 ## Deferred
 
