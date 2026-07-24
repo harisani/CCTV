@@ -6,6 +6,7 @@ from app.config.settings import Settings, get_settings
 from app.database.session import get_session
 from app.repository import BackupRepository, CameraRepository, DisasterRecoveryRepository, EventRepository, PersonRepository, SnapshotRepository, StatisticsRepository, UserRepository
 from app.services.container import ServiceContainer, get_service_container
+from app.services.health_service import HealthService
 
 
 def get_app_settings() -> Generator[Settings, None, None]:
@@ -62,3 +63,8 @@ async def get_disaster_recovery_repository() -> AsyncGenerator[DisasterRecoveryR
 def get_services() -> Generator[ServiceContainer, None, None]:
     """Expose long-lived services through FastAPI dependency injection."""
     yield get_service_container()
+
+
+def get_health_service() -> Generator[HealthService, None, None]:
+    """Provide the stateless health probe service."""
+    yield get_service_container().health

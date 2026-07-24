@@ -23,7 +23,7 @@ from app.services.container import get_service_container
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI):
+async def lifespan(application: FastAPI):
     """Set up and release process-wide resources for the HTTP application."""
     settings = get_settings()
     services = get_service_container()
@@ -69,8 +69,10 @@ async def lifespan(_: FastAPI):
         )
         await camera_runtime.start()
     try:
+        application.state.ready = True
         yield
     finally:
+        application.state.ready = False
         if presence_reconciliation is not None:
             await presence_reconciliation.stop()
         if backup_scheduler is not None:
@@ -89,6 +91,7 @@ def create_app() -> FastAPI:
     settings = get_settings()
     settings.storage_path.mkdir(parents=True, exist_ok=True)
     application = FastAPI(title=settings.app_name, debug=settings.debug, lifespan=lifespan)
+    application.state.ready = False
     application.add_middleware(
         RequestContextMiddleware,
         max_length=settings.correlation_id_max_length,

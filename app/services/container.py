@@ -9,6 +9,7 @@ from app.detector import DetectorService
 from app.reid import PersonReIdentificationService
 from app.services.camera_service import CameraService
 from app.services.crossing_service import CrossingService
+from app.services.health_service import HealthService
 from app.services.live_visibility_service import LiveVisibilityService, live_visibility_service
 from app.storage import SnapshotService
 from app.tracker import TrackingService
@@ -42,6 +43,10 @@ class ServiceContainer:
     @cached_property
     def live_visibility(self) -> LiveVisibilityService:
         return live_visibility_service
+
+    @cached_property
+    def health(self) -> HealthService:
+        return HealthService()
 
     def camera(self, camera_id: str, rtsp_url: str) -> CameraService:
         """Create per-camera state; camera readers must not be shared."""
