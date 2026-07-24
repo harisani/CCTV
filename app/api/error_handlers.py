@@ -10,7 +10,13 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from starlette.exceptions import HTTPException
 
-from app.api.request_context import get_correlation_id
+from app.api.request_context import (
+    bind_correlation_id,
+    choose_correlation_id,
+    get_correlation_id,
+    reset_correlation_id,
+)
+from app.config.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -85,9 +91,30 @@ def register_exception_handlers(app: FastAPI) -> None:
         )
 
     @app.exception_handler(Exception)
-    async def handle_unexpected_error(_: Request, error: Exception) -> JSONResponse:
-        logger.exception("Unhandled application error", exc_info=error)
-        return JSONResponse(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            content=error_content("An unexpected server error occurred."),
-        )
+    async def handle_unexpected_error(request: Request, error: Exception) -> JSONResponse:
+        correlation_id = get_correlation_id()
+        context_token = None
+        if correlation_id is None:
+            correlation_id = choose_correlation_id(
+                request.headers.get("X-Correlation-ID"),
+                get_settings().correlation_id_max_length,
+            )
+            context_token = bind_correlation_id(correlation_id)
+        try:
+            logger.exception(
+                "Unhandled application error",
+                exc_info=error,
+                extra={
+                    "correlation_id": correlation_id,
+                    "exception_type": type(error).__name__,
+                },
+            )
+            response = JSONResponse(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                content=error_content("An unexpected server error occurred."),
+            )
+            response.headers["X-Correlation-ID"] = correlation_id
+            return response
+        finally:
+            if context_token is not None:
+                reset_correlation_id(context_token)

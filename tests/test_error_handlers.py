@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from app.api.error_handlers import register_exception_handlers
 from app.api.middleware import RequestContextMiddleware
+from app.utils.logging import JsonFormatter
 
 
 class ValidationPayload(BaseModel):
@@ -79,12 +80,28 @@ def test_validation_error_does_not_echo_sensitive_input() -> None:
     assert "sensitive-submitted-value" not in response.text
 
 
-def test_unexpected_error_hides_internal_detail() -> None:
-    response = client.get("/explode")
+def test_unexpected_error_hides_internal_detail(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.handler.setFormatter(JsonFormatter())
+    with caplog.at_level(logging.ERROR, logger="app.api.error_handlers"):
+        response = client.get(
+            "/explode",
+            headers={"X-Correlation-ID": "unexpected-test-1"},
+        )
 
     assert response.status_code == 500
+    assert response.headers["X-Correlation-ID"] == "unexpected-test-1"
     assert "postgresql://" not in response.text
-    assert response.json()["detail"] == "An unexpected server error occurred."
+    assert response.json() == {
+        "detail": "An unexpected server error occurred.",
+        "correlation_id": "unexpected-test-1",
+    }
+    error_record = next(
+        record for record in caplog.records if record.name == "app.api.error_handlers"
+    )
+    assert error_record.correlation_id == "unexpected-test-1"
+    assert "postgresql://" not in caplog.text
 
 
 @pytest.mark.parametrize(
