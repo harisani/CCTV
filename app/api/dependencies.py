@@ -7,6 +7,7 @@ from app.database.session import get_session
 from app.repository import BackupRepository, CameraRepository, DisasterRecoveryRepository, EventRepository, PersonRepository, SnapshotRepository, StatisticsRepository, UserRepository
 from app.services.container import ServiceContainer, get_service_container
 from app.services.health_service import HealthService
+from app.services.login_rate_limiter import LoginRateLimiter
 
 
 def get_app_settings() -> Generator[Settings, None, None]:
@@ -68,3 +69,8 @@ def get_services() -> Generator[ServiceContainer, None, None]:
 def get_health_service() -> Generator[HealthService, None, None]:
     """Provide the stateless health probe service."""
     yield get_service_container().health
+
+
+def get_login_rate_limiter() -> Generator[LoginRateLimiter, None, None]:
+    """Provide the process-local singleton login limiter."""
+    yield get_service_container().login_limiter

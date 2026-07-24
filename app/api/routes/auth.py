@@ -1,12 +1,17 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 
-from app.api.dependencies import get_app_settings, get_user_repository
+from app.api.dependencies import (
+    get_app_settings,
+    get_login_rate_limiter,
+    get_user_repository,
+)
 from app.api.schemas import PasswordChange, TokenResponse, UserResponse
 from app.api.security import create_access_token, require_authenticated_user
 from app.config.settings import Settings
 from app.models import User
 from app.repository import UserRepository
+from app.services.login_rate_limiter import LoginRateLimiter
 from app.services.user_service import UserService
 
 router = APIRouter(prefix="/auth")
@@ -14,11 +19,38 @@ router = APIRouter(prefix="/auth")
 
 @router.post("/token", response_model=TokenResponse)
 async def login_for_access_token(
+    request: Request,
     form: OAuth2PasswordRequestForm = Depends(),
     settings: Settings = Depends(get_app_settings),
     repository: UserRepository = Depends(get_user_repository),
+    limiter: LoginRateLimiter = Depends(get_login_rate_limiter),
 ) -> TokenResponse:
-    user = await UserService(repository).authenticate(form.username, form.password, settings)
+    client_host = request.client.host if request.client else "unknown"
+    key = limiter.build_key(form.username, client_host)
+    retry_after = limiter.retry_after(key)
+    if retry_after is not None:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many login attempts",
+            headers={"Retry-After": str(retry_after)},
+        )
+    try:
+        user = await UserService(repository).authenticate(
+            form.username,
+            form.password,
+            settings,
+        )
+    except HTTPException as error:
+        if error.status_code == status.HTTP_401_UNAUTHORIZED:
+            retry_after = limiter.record_failure(key)
+            if retry_after is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail="Too many login attempts",
+                    headers={"Retry-After": str(retry_after)},
+                ) from error
+        raise
+    limiter.reset(key)
     return TokenResponse(access_token=create_access_token(settings, user))
 
 
