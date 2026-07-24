@@ -66,6 +66,53 @@ def test_redaction_removes_custom_evidence_paths() -> None:
     assert "missing.jpg" not in redacted
 
 
+def test_redaction_removes_colon_delimited_sensitive_values() -> None:
+    value = (
+        "payload={'postgres_password': 'repr-secret', \"access_token\": \"json-token\", "
+        "'face_embedding': [[0.12, -0.08], [0.14, -0.16]], "
+        "'biometric_vector': array([0.21, -0.23]), "
+        "vector: (0.31, -0.33), 'safe': [1, 2]}"
+    )
+
+    redacted = redact_sensitive(value)
+
+    assert "repr-secret" not in redacted
+    assert "json-token" not in redacted
+    for sensitive_value in (
+        "0.12",
+        "-0.08",
+        "0.14",
+        "-0.16",
+        "0.21",
+        "-0.23",
+        "0.31",
+        "-0.33",
+    ):
+        assert sensitive_value not in redacted
+    assert "[1, 2]" in redacted
+
+
+def test_redaction_preserves_safe_diagnostic_url_and_numeric_list() -> None:
+    value = "diagnostic=https://cctv.example/health?view=summary metrics=[1, 2, 3]"
+
+    assert redact_sensitive(value) == value
+
+
+def test_redaction_removes_sensitive_urls_but_preserves_safe_diagnostic_urls() -> None:
+    value = (
+        "stream=https://camera-user:camera-pass@cctv.example/live "
+        "callback=https://cctv.example/events?view=summary&access_token=request-token "
+        "diagnostic=https://cctv.example/health?view=summary"
+    )
+
+    redacted = redact_sensitive(value)
+
+    assert "camera-user" not in redacted
+    assert "camera-pass" not in redacted
+    assert "request-token" not in redacted
+    assert "https://cctv.example/health?view=summary" in redacted
+
+
 def test_json_formatter_adds_context_and_http_fields() -> None:
     stream = StringIO()
     handler = logging.StreamHandler(stream)
@@ -95,6 +142,162 @@ def test_json_formatter_adds_context_and_http_fields() -> None:
     assert payload["http_method"] == "GET"
     assert payload["http_path"] == "/health"
     assert payload["http_status"] == 200
+
+
+def test_configured_json_logging_redacts_nested_exception_vectors(capsys) -> None:
+    root = logging.getLogger()
+    original_handlers = root.handlers[:]
+    original_level = root.level
+    access_logger = logging.getLogger("uvicorn.access")
+    original_access_level = access_logger.level
+    try:
+        configure_logging("INFO", "production", "auto")
+        try:
+            raise RuntimeError(
+                "upstream returned "
+                "{'biometric_vector': array([0.71, -0.82]), 'samples': [4, 5]}"
+            )
+        except RuntimeError:
+            logging.getLogger("phase1-json-nested-exception-test").exception(
+                "request failed with details=%r",
+                {"face_embedding": [[0.11, -0.12], [0.13, -0.14]], "samples": [1, 2, 3]},
+            )
+        output = capsys.readouterr().err
+    finally:
+        root.handlers = original_handlers
+        root.setLevel(original_level)
+        access_logger.setLevel(original_access_level)
+
+    payload = json.loads(output)
+    rendered = json.dumps(payload)
+    for sensitive_value in ("0.11", "-0.12", "0.13", "-0.14", "0.71", "-0.82"):
+        assert sensitive_value not in rendered
+    assert "[1, 2, 3]" in rendered
+    assert "[4, 5]" in rendered
+
+
+def test_configured_text_logging_redacts_nested_exception_vectors(capsys) -> None:
+    root = logging.getLogger()
+    original_handlers = root.handlers[:]
+    original_level = root.level
+    access_logger = logging.getLogger("uvicorn.access")
+    original_access_level = access_logger.level
+    try:
+        configure_logging("INFO", "development", "auto")
+        try:
+            raise RuntimeError(
+                "upstream returned "
+                "{'biometric_vector': array([0.71, -0.82]), 'samples': [4, 5]}"
+            )
+        except RuntimeError:
+            logging.getLogger("phase1-text-nested-exception-test").exception(
+                "request failed with details=%r",
+                {"face_embedding": [[0.11, -0.12], [0.13, -0.14]], "samples": [1, 2, 3]},
+            )
+        output = capsys.readouterr().err
+    finally:
+        root.handlers = original_handlers
+        root.setLevel(original_level)
+        access_logger.setLevel(original_access_level)
+
+    for sensitive_value in ("0.11", "-0.12", "0.13", "-0.14", "0.71", "-0.82"):
+        assert sensitive_value not in output
+    assert "[1, 2, 3]" in output
+    assert "[4, 5]" in output
+
+
+def test_configured_json_logging_redacts_nested_sensitive_values(capsys) -> None:
+    root = logging.getLogger()
+    original_handlers = root.handlers[:]
+    original_level = root.level
+    access_logger = logging.getLogger("uvicorn.access")
+    original_access_level = access_logger.level
+    try:
+        configure_logging("INFO", "production", "auto")
+        details = {
+            "identity": {
+                "postgres_password": "nested-secret",
+                "reid_embedding": [0.12, -0.08],
+            },
+            "metrics": {"samples": [1, 2, 3]},
+        }
+        try:
+            raise RuntimeError(
+                "worker failed: {'jwt_secret': 'exception-secret', 'vector': [0.7, -0.8]}"
+            )
+        except RuntimeError:
+            logging.getLogger("phase1-json-redaction-test").exception(
+                "embedding=%s details=%s",
+                [0.31, -0.42],
+                details,
+            )
+        output = capsys.readouterr().err
+    finally:
+        root.handlers = original_handlers
+        root.setLevel(original_level)
+        access_logger.setLevel(original_access_level)
+
+    payload = json.loads(output)
+    rendered = json.dumps(payload)
+    for sensitive_value in (
+        "nested-secret",
+        "exception-secret",
+        "0.12",
+        "-0.08",
+        "0.31",
+        "-0.42",
+        "0.7",
+        "-0.8",
+    ):
+        assert sensitive_value not in rendered
+    assert "[1, 2, 3]" in rendered
+    assert "[REDACTED]" in rendered
+
+
+def test_configured_text_logging_redacts_nested_sensitive_values(capsys) -> None:
+    root = logging.getLogger()
+    original_handlers = root.handlers[:]
+    original_level = root.level
+    access_logger = logging.getLogger("uvicorn.access")
+    original_access_level = access_logger.level
+    try:
+        configure_logging("INFO", "development", "auto")
+        details = {
+            "identity": {
+                "postgres_password": "nested-secret",
+                "reid_embedding": [0.12, -0.08],
+            },
+            "metrics": {"samples": [1, 2, 3]},
+        }
+        try:
+            raise RuntimeError(
+                "worker failed: {'jwt_secret': 'exception-secret', 'vector': [0.7, -0.8]}"
+            )
+        except RuntimeError:
+            logging.getLogger("phase1-text-redaction-test").exception(
+                "embedding=%s details=%s",
+                [0.31, -0.42],
+                details,
+            )
+        output = capsys.readouterr().err
+    finally:
+        root.handlers = original_handlers
+        root.setLevel(original_level)
+        access_logger.setLevel(original_access_level)
+
+    for sensitive_value in (
+        "nested-secret",
+        "exception-secret",
+        "0.12",
+        "-0.08",
+        "0.31",
+        "-0.42",
+        "0.7",
+        "-0.8",
+    ):
+        assert sensitive_value not in output
+    assert "[1, 2, 3]" in output
+    assert "[REDACTED]" in output
 
 
 def test_text_logging_redacts_sensitive_message_content(capsys) -> None:
