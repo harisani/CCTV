@@ -10,19 +10,66 @@ from typing import Any
 
 from app.api.request_context import get_correlation_id
 
-_BEARER = re.compile(r"(?i)(authorization\s*:\s*bearer\s+)[^\s,;]+")
-_SENSITIVE_KEY_PART = r"(?:password|passwd|token|secret|passphrase|authorization|credential|embedding|vector|biometric)"
-_SENSITIVE_FIELD_NAME = rf"[A-Za-z0-9_-]*{_SENSITIVE_KEY_PART}[A-Za-z0-9_-]*"
-_SENSITIVE_KEY = re.compile(rf"(?i){_SENSITIVE_FIELD_NAME}")
+_SENSITIVE_KEYS = frozenset(
+    {
+        "access_token",
+        "api_key",
+        "api_token",
+        "auth_token",
+        "authorization",
+        "bearer_token",
+        "biometric_embedding",
+        "biometric_vector",
+        "camera_password",
+        "client_secret",
+        "credential",
+        "database_password",
+        "db_password",
+        "embedding",
+        "embeddings",
+        "face_embedding",
+        "id_token",
+        "jwt_secret",
+        "jwt_token",
+        "passphrase",
+        "passwd",
+        "password",
+        "periocular_embedding",
+        "postgres_password",
+        "postgresql_password",
+        "refresh_token",
+        "reid_embedding",
+        "secret",
+        "secret_key",
+        "token",
+        "vector",
+        "vectors",
+    }
+)
+_SENSITIVE_LABEL_KEY_PATTERN = "(?:" + "|".join(
+    re.escape(key).replace("_", r"[\s_-]+")
+    for key in sorted(_SENSITIVE_KEYS, key=len, reverse=True)
+) + ")"
+_SENSITIVE_QUERY_KEY_PATTERN = "(?:" + "|".join(
+    re.escape(key).replace("_", "[_-]")
+    for key in sorted(_SENSITIVE_KEYS, key=len, reverse=True)
+) + ")"
+_BEARER = re.compile(r"(?i)(\bbearer\s+)[^\s,;]+")
 _CREDENTIAL_URL = re.compile(
     r"(?i)\b(?:https?|rtsp|postgresql(?:\+asyncpg)?):\/\/[^:/@\s]+:[^@\s]+@[^\s,;]+"
 )
 _SENSITIVE_QUERY_URL = re.compile(
-    rf"(?i)\bhttps?:\/\/[^\s,;]*\?(?:[^&\s,;]*&)*{_SENSITIVE_FIELD_NAME}=[^\s,;]+"
+    rf"(?i)\bhttps?:\/\/[^\s,;]*\?(?:[^&\s,;]*&)*"
+    rf"{_SENSITIVE_QUERY_KEY_PATTERN}=[^\s,;]+"
 )
 _SENSITIVE_LABEL = re.compile(
     rf"(?i)(?<![A-Za-z0-9_-])(?P<quote>['\"]?)"
-    rf"(?P<key>{_SENSITIVE_FIELD_NAME})(?P=quote)\s*[:=]\s*"
+    rf"(?P<key>{_SENSITIVE_LABEL_KEY_PATTERN})(?P=quote)"
+    r"(?:\s*[:=]\s*|\s+)"
+)
+_REID_RESULT_LABEL = re.compile(
+    r"(?i)(?<![A-Za-z0-9_-])reid\s+result(?:\s*[:=]\s*|\s+)"
+    r"(?=(?:array\s*\(|\[|\(|\{|[-+]?(?:\d+(?:\.\d*)?|\.\d)))"
 )
 _EVIDENCE_PATH = re.compile(
     r"(?i)(?<![\w/])(?:(?:[a-z]:[\\/]|/)[^\s,;]*(?:storage|evidence|snapshot)[^\s,;]*|"
@@ -39,6 +86,10 @@ _EXTRA_FIELDS = (
     "user_id",
     "exception_type",
 )
+
+
+def _normalize_key(key: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", key.casefold()).strip("_")
 
 
 def _quoted_value_end(value: str, start: int, quote: str) -> int:
@@ -80,10 +131,10 @@ def _sensitive_value_end(value: str, start: int) -> int:
     return len(value)
 
 
-def _redact_labeled_values(value: str) -> str:
+def _redact_labeled_values(value: str, label: re.Pattern[str]) -> str:
     parts: list[str] = []
     cursor = 0
-    while match := _SENSITIVE_LABEL.search(value, cursor):
+    while match := label.search(value, cursor):
         value_end = _sensitive_value_end(value, match.end())
         parts.extend((value[cursor : match.end()], "[REDACTED]"))
         cursor = value_end
@@ -95,13 +146,14 @@ def redact_sensitive(value: str) -> str:
     value = _BEARER.sub(r"\1[REDACTED]", value)
     value = _CREDENTIAL_URL.sub("[REDACTED]", value)
     value = _SENSITIVE_QUERY_URL.sub("[REDACTED]", value)
-    value = _redact_labeled_values(value)
+    value = _redact_labeled_values(value, _SENSITIVE_LABEL)
+    value = _redact_labeled_values(value, _REID_RESULT_LABEL)
     value = _EVIDENCE_VALUE.sub(r"\1[REDACTED]", value)
     return _EVIDENCE_PATH.sub("[REDACTED]", value)
 
 
 def _sanitize_value(value: Any, *, key: str | None = None) -> Any:
-    if key is not None and _SENSITIVE_KEY.search(key) is not None:
+    if key is not None and _normalize_key(key) in _SENSITIVE_KEYS:
         return "[REDACTED]"
     if isinstance(value, Mapping):
         return {

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import ast
 import json
 import logging
+from pathlib import Path
+import re
 from io import StringIO
 
 from app.api.request_context import bind_correlation_id, reset_correlation_id
@@ -19,6 +22,47 @@ def test_redaction_removes_supported_credentials() -> None:
     assert "camera-pass" not in redacted
     assert "plain-value" not in redacted
     assert "[REDACTED]" in redacted
+
+
+def test_redaction_removes_standalone_bearer_and_whitespace_values() -> None:
+    value = (
+        "upstream sent Bearer standalone-secret "
+        "password whitespace-secret "
+        "embedding [0.11, -0.22] "
+        "ReID result array([0.33, -0.44]) "
+        "embeddings [[0.51]] vectors=(-0.61,) "
+        "reid_embedding: [0.71] face_embedding=[0.81] "
+        "periocular_embedding array([0.91]) "
+        "samples [1, 2]"
+    )
+
+    redacted = redact_sensitive(value)
+
+    for sensitive_value in (
+        "standalone-secret",
+        "whitespace-secret",
+        "0.11",
+        "-0.22",
+        "0.33",
+        "-0.44",
+        "0.51",
+        "-0.61",
+        "0.71",
+        "0.81",
+        "0.91",
+    ):
+        assert sensitive_value not in redacted
+    assert "[1, 2]" in redacted
+
+
+def test_redaction_preserves_exact_key_lookalikes() -> None:
+    value = (
+        "tokenizer: wordpiece passwordless=enabled "
+        "vector_count: [1, 2] secretary='Alice' "
+        "diagnostic=https://cctv.example/health?tokenizer=wordpiece"
+    )
+
+    assert redact_sensitive(value) == value
 
 
 def test_redaction_removes_sensitive_urls_and_evidence_paths() -> None:
@@ -69,6 +113,7 @@ def test_redaction_removes_custom_evidence_paths() -> None:
 def test_redaction_removes_colon_delimited_sensitive_values() -> None:
     value = (
         "payload={'postgres_password': 'repr-secret', \"access_token\": \"json-token\", "
+        "'access token': 'normalized-secret', "
         "'face_embedding': [[0.12, -0.08], [0.14, -0.16]], "
         "'biometric_vector': array([0.21, -0.23]), "
         "vector: (0.31, -0.33), 'safe': [1, 2]}"
@@ -78,6 +123,7 @@ def test_redaction_removes_colon_delimited_sensitive_values() -> None:
 
     assert "repr-secret" not in redacted
     assert "json-token" not in redacted
+    assert "normalized-secret" not in redacted
     for sensitive_value in (
         "0.12",
         "-0.08",
@@ -220,14 +266,22 @@ def test_configured_json_logging_redacts_nested_sensitive_values(capsys) -> None
                 "reid_embedding": [0.12, -0.08],
             },
             "metrics": {"samples": [1, 2, 3]},
+            "diagnostics": {
+                "tokenizer": "osnet",
+                "passwordless": True,
+                "vector_count": [4, 5],
+                "secretary": "Alice",
+            },
         }
         try:
             raise RuntimeError(
-                "worker failed: {'jwt_secret': 'exception-secret', 'vector': [0.7, -0.8]}"
+                "worker failed: Bearer exception-bearer "
+                "ReID result array([0.7, -0.8])"
             )
         except RuntimeError:
             logging.getLogger("phase1-json-redaction-test").exception(
-                "embedding=%s details=%s",
+                "password %s embedding %s details=%s",
+                "message-secret",
                 [0.31, -0.42],
                 details,
             )
@@ -241,7 +295,8 @@ def test_configured_json_logging_redacts_nested_sensitive_values(capsys) -> None
     rendered = json.dumps(payload)
     for sensitive_value in (
         "nested-secret",
-        "exception-secret",
+        "exception-bearer",
+        "message-secret",
         "0.12",
         "-0.08",
         "0.31",
@@ -251,6 +306,9 @@ def test_configured_json_logging_redacts_nested_sensitive_values(capsys) -> None
     ):
         assert sensitive_value not in rendered
     assert "[1, 2, 3]" in rendered
+    assert "[4, 5]" in rendered
+    for safe_value in ("osnet", "passwordless", "vector_count", "secretary", "Alice"):
+        assert safe_value in rendered
     assert "[REDACTED]" in rendered
 
 
@@ -268,14 +326,22 @@ def test_configured_text_logging_redacts_nested_sensitive_values(capsys) -> None
                 "reid_embedding": [0.12, -0.08],
             },
             "metrics": {"samples": [1, 2, 3]},
+            "diagnostics": {
+                "tokenizer": "osnet",
+                "passwordless": True,
+                "vector_count": [4, 5],
+                "secretary": "Alice",
+            },
         }
         try:
             raise RuntimeError(
-                "worker failed: {'jwt_secret': 'exception-secret', 'vector': [0.7, -0.8]}"
+                "worker failed: Bearer exception-bearer "
+                "ReID result array([0.7, -0.8])"
             )
         except RuntimeError:
             logging.getLogger("phase1-text-redaction-test").exception(
-                "embedding=%s details=%s",
+                "password %s embedding %s details=%s",
+                "message-secret",
                 [0.31, -0.42],
                 details,
             )
@@ -287,7 +353,8 @@ def test_configured_text_logging_redacts_nested_sensitive_values(capsys) -> None
 
     for sensitive_value in (
         "nested-secret",
-        "exception-secret",
+        "exception-bearer",
+        "message-secret",
         "0.12",
         "-0.08",
         "0.31",
@@ -297,7 +364,63 @@ def test_configured_text_logging_redacts_nested_sensitive_values(capsys) -> None
     ):
         assert sensitive_value not in output
     assert "[1, 2, 3]" in output
+    assert "[4, 5]" in output
+    for safe_value in ("osnet", "passwordless", "vector_count", "secretary", "Alice"):
+        assert safe_value in output
     assert "[REDACTED]" in output
+
+
+def test_app_logging_calls_do_not_pass_unlabeled_raw_embeddings() -> None:
+    sensitive_context = re.compile(
+        r"(?i)(?<![a-z0-9_])(?:embedding|embeddings|vector|vectors|"
+        r"reid_embedding|face_embedding|periocular_embedding)(?![a-z0-9_])|"
+        r"\breid\s+result\b"
+    )
+    violations: list[str] = []
+
+    def is_raw_embedding_name(name: str) -> bool:
+        normalized = name.casefold()
+        return any(
+            normalized == suffix or normalized.endswith(f"_{suffix}")
+            for suffix in ("embedding", "embeddings", "vector", "vectors")
+        )
+
+    for path in Path("app").rglob("*.py"):
+        tree = ast.parse(path.read_text(), filename=str(path))
+        for node in ast.walk(tree):
+            if (
+                not isinstance(node, ast.Call)
+                or not isinstance(node.func, ast.Attribute)
+                or node.func.attr
+                not in {"debug", "info", "warning", "error", "exception", "critical"}
+            ):
+                continue
+            logged_values = [*node.args, *(keyword.value for keyword in node.keywords)]
+            argument_names = {
+                child.id if isinstance(child, ast.Name) else child.attr
+                for argument in logged_values
+                for child in ast.walk(argument)
+                if isinstance(child, (ast.Name, ast.Attribute))
+            }
+            if not any(is_raw_embedding_name(name) for name in argument_names):
+                continue
+            if not node.args:
+                violations.append(f"{path}:{node.lineno}")
+                continue
+            if isinstance(node.args[0], ast.Constant):
+                template = node.args[0].value
+            elif isinstance(node.args[0], ast.JoinedStr):
+                template = "".join(
+                    item.value
+                    for item in node.args[0].values
+                    if isinstance(item, ast.Constant) and isinstance(item.value, str)
+                )
+            else:
+                template = ""
+            if not isinstance(template, str) or sensitive_context.search(template) is None:
+                violations.append(f"{path}:{node.lineno}")
+
+    assert violations == []
 
 
 def test_text_logging_redacts_sensitive_message_content(capsys) -> None:
