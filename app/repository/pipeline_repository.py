@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
@@ -12,12 +12,20 @@ from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.models import (
+    CameraZoneMapping,
+    CaptureEvent,
+    CaptureEventStatus,
+    EvidenceAsset,
+    EvidenceAssetType,
+    EvidenceIntegrityStatus,
     Event,
     EventType,
     PresenceSession,
     PresenceStatus,
     Snapshot,
     Tracking,
+    VirtualLine,
+    Zone,
 )
 from app.repository.person_repository import PersonRepository
 if TYPE_CHECKING:
@@ -29,8 +37,14 @@ if TYPE_CHECKING:
 class PipelineRepository:
     """Keep camera loops independent from long-lived SQLAlchemy sessions."""
 
-    def __init__(self, session_factory: Any) -> None:
+    def __init__(
+        self,
+        session_factory: Any,
+        *,
+        evidence_retention_days: int = 90,
+    ) -> None:
         self._session_factory = session_factory
+        self._evidence_retention_days = evidence_retention_days
 
     async def identify_person(
         self,
@@ -204,22 +218,137 @@ class PipelineRepository:
                 tracking=tracking,
                 existing=open_presence,
             )
+            legacy_snapshot: Snapshot | None = None
             if snapshot is not None:
-                session.add(
-                    Snapshot(
-                        id=snapshot.snapshot_id,
-                        event_id=event.id,
-                        image_path=str(snapshot.image_path),
-                        metadata_path=str(snapshot.metadata_path),
-                        bbox={
-                            "x1": track.bbox[0],
-                            "y1": track.bbox[1],
-                            "x2": track.bbox[2],
-                            "y2": track.bbox[3],
-                        },
-                        saved_at=crossing.occurred_at,
+                legacy_snapshot = Snapshot(
+                    id=snapshot.snapshot_id,
+                    event_id=event.id,
+                    image_path=str(snapshot.image_path),
+                    metadata_path=str(snapshot.metadata_path),
+                    bbox={
+                        "x1": track.bbox[0],
+                        "y1": track.bbox[1],
+                        "x2": track.bbox[2],
+                        "y2": track.bbox[3],
+                    },
+                    saved_at=crossing.occurred_at,
+                )
+                session.add(legacy_snapshot)
+
+            virtual_line = await session.scalar(
+                select(VirtualLine).where(
+                    VirtualLine.camera_id == tracking.camera_id,
+                    VirtualLine.line_key == crossing.line_id,
+                    VirtualLine.enabled.is_(True),
+                )
+            )
+            zone_id = None
+            if virtual_line is not None:
+                zone_id = (
+                    virtual_line.to_zone_id
+                    if crossing_type == EventType.ENTER
+                    else virtual_line.from_zone_id
+                )
+            if zone_id is None:
+                mapping = await session.scalar(
+                    select(CameraZoneMapping)
+                    .where(
+                        CameraZoneMapping.camera_id == tracking.camera_id,
+                        CameraZoneMapping.enabled.is_(True),
+                    )
+                    .order_by(
+                        CameraZoneMapping.is_primary.desc(),
+                        CameraZoneMapping.created_at,
                     )
                 )
+                zone_id = mapping.zone_id if mapping is not None else None
+
+            retention_days = self._evidence_retention_days
+            if zone_id is not None:
+                configured_retention = await session.scalar(
+                    select(Zone.retention_days).where(Zone.id == zone_id)
+                )
+                if configured_retention is not None:
+                    retention_days = int(configured_retention)
+
+            capture_event = CaptureEvent(
+                id=snapshot.capture_event_id if snapshot and snapshot.capture_event_id else event.id,
+                idempotency_key=(
+                    snapshot.idempotency_key
+                    if snapshot and snapshot.idempotency_key
+                    else f"crossing:{event.id}"
+                ),
+                source_event_id=event.id,
+                camera_id=tracking.camera_id,
+                zone_id=zone_id,
+                virtual_line_id=virtual_line.id if virtual_line is not None else None,
+                tracking_id=database_tracking_id,
+                status=(
+                    CaptureEventStatus.CAPTURED
+                    if snapshot is not None
+                    else CaptureEventStatus.FAILED
+                ),
+                direction=track.direction,
+                bbox={
+                    "x1": track.bbox[0],
+                    "y1": track.bbox[1],
+                    "x2": track.bbox[2],
+                    "y2": track.bbox[3],
+                },
+                centroid={
+                    "x": crossing.centroid[0],
+                    "y": crossing.centroid[1],
+                },
+                capture_quality={
+                    "detector_confidence": track.confidence,
+                    "bbox_width": max(0.0, track.bbox[2] - track.bbox[0]),
+                    "bbox_height": max(0.0, track.bbox[3] - track.bbox[1]),
+                },
+                capture_metadata={
+                    "event_type": crossing_type.value,
+                    "line_id": crossing.line_id,
+                    "byte_track_id": track.tracking_id,
+                    "person_id": str(person_id) if person_id else None,
+                },
+                captured_at=crossing.occurred_at,
+                failed_at=crossing.occurred_at if snapshot is None else None,
+                error_message=snapshot_error if snapshot is None else None,
+                attempt_count=0,
+                created_at=crossing.occurred_at,
+                updated_at=crossing.occurred_at,
+            )
+            session.add(capture_event)
+
+            if snapshot is not None:
+                for asset in snapshot.assets:
+                    session.add(
+                        EvidenceAsset(
+                            id=asset.asset_id,
+                            capture_event_id=capture_event.id,
+                            legacy_snapshot_id=(
+                                legacy_snapshot.id
+                                if asset.asset_type
+                                == EvidenceAssetType.ANNOTATED_SNAPSHOT
+                                else None
+                            ),
+                            asset_type=asset.asset_type,
+                            sequence_index=asset.sequence_index,
+                            storage_key=asset.storage_key,
+                            checksum_sha256=asset.checksum_sha256,
+                            integrity_status=EvidenceIntegrityStatus.VERIFIED,
+                            mime_type=asset.mime_type,
+                            size_bytes=asset.size_bytes,
+                            width=asset.width,
+                            height=asset.height,
+                            is_primary=asset.is_primary,
+                            asset_metadata=asset.metadata,
+                            captured_at=crossing.occurred_at,
+                            retention_until=(
+                                crossing.occurred_at
+                                + timedelta(days=retention_days)
+                            ),
+                        )
+                    )
             try:
                 await session.commit()
             except IntegrityError:
@@ -235,6 +364,8 @@ class PipelineRepository:
                 "centroid": event.centroid,
                 "occurred_at": event.occurred_at.isoformat(),
                 "snapshot_id": str(snapshot.snapshot_id) if snapshot else None,
+                "capture_event_id": str(capture_event.id),
+                "capture_status": capture_event.status.value,
             }
 
     @staticmethod
@@ -382,5 +513,7 @@ class PipelineRepository:
     def remove_snapshot(snapshot: SnapshotResult | None) -> None:
         if snapshot is None:
             return
-        Path(snapshot.image_path).unlink(missing_ok=True)
-        Path(snapshot.metadata_path).unlink(missing_ok=True)
+        paths = {snapshot.image_path, snapshot.metadata_path}
+        paths.update(asset.path for asset in snapshot.assets)
+        for path in paths:
+            Path(path).unlink(missing_ok=True)

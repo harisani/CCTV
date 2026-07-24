@@ -59,6 +59,9 @@ scrypt di PostgreSQL, bukan kembali ke `.env`.
   in-memory object URL. Evidence tokens never appear in URLs, inherit user
   session revocation through `token_version`, and every grant/view is audited
   with a shared grant ID.
+- Phase 3 evidence assets use immutable relative storage keys and SHA-256
+  checksums. Database triggers prevent changing an asset's capture identity,
+  storage key, or enrolled checksum after creation.
 - Snapshot list responses expose stable snapshot/event IDs, bounding boxes, and
   timestamps only. Server filesystem paths for images and metadata remain
   internal persistence details and are never part of the public API contract.
@@ -98,8 +101,8 @@ volume persisten:
 storage/backups/YYYY/MM/YYYYMMDD_<uuid>.zip
 ```
 
-ZIP memuat `manifest.json`, dataset JSON Lines, snapshot JPEG, dan metadata
-snapshot. Setiap member memiliki checksum SHA-256. File dibuat secara atomik;
+ZIP memuat `manifest.json`, dataset JSON Lines, snapshot lama, capture event,
+dan evidence asset. Setiap member memiliki checksum SHA-256. File dibuat secara atomik;
 job yang terputus akibat restart ditandai `FAILED` saat startup dan dapat dibuat
 ulang secara manual. Backup otomatis yang lebih tua dari
 `BACKUP_RETENTION_DAYS` dibersihkan, sedangkan arsip yang di-import tidak ikut
@@ -255,8 +258,8 @@ CameraService latest frame
   → OSNet ReID saat track baru
   → Person + Tracking PostgreSQL
   → Line Crossing ENTER/EXIT
-  → Snapshot JPEG + JSON
-  → Event + Snapshot dalam transaksi database
+  → Evidence bundle atomik + checksum SHA-256
+  → Event/Snapshot kompatibilitas + CaptureEvent/EvidenceAsset
   → WebSocket frame/tracks/event/occupancy
   → Dashboard React
 ```
@@ -265,6 +268,11 @@ AI tetap memproses kamera walaupun tidak ada dashboard yang berlangganan. JPEG
 live hanya diencode untuk kamera yang sedang dilihat. Tracking yang tidak muncul
 lagi ditutup otomatis, dan event yang gagal disimpan karena gangguan database
 masuk ke antrean retry bounded tanpa membuang snapshot.
+
+Setiap crossing yang diterima menyimpan original snapshot, gambar beranotasi,
+full-body crop, thumbnail, dan metadata JSON. Semua metadata database dibuat
+dalam transaksi yang sama dengan event lama sehingga dashboard yang sudah ada
+tetap kompatibel.
 
 Konfigurasi pipeline:
 
@@ -285,6 +293,8 @@ REID_EMBEDDING_RETENTION_DAYS=90
 REID_MIN_EMBEDDINGS_PER_PERSON=3
 REID_MAX_EMBEDDINGS_PER_PERSON=20
 ENABLE_REID_RETENTION=true
+EVIDENCE_THUMBNAIL_WIDTH=320
+EVIDENCE_DEFAULT_RETENTION_DAYS=90
 ```
 
 Untuk Mac M1/CPU mulai dari `AI_PIPELINE_FPS=2` dan concurrency `1`. Untuk GPU,
@@ -378,6 +388,30 @@ kolom lokasi kamera, sedangkan virtual line utama tetap disinkronkan ke endpoint
 crossing lama. Detail implementasi dan kontrak API tersedia di
 [`docs/audits/2026-07-24-phase2-topology-report.md`](docs/audits/2026-07-24-phase2-topology-report.md).
 
+### Capture event dan evidence immutable
+
+Phase 3 menambahkan `capture_events` sebagai envelope operasional dan
+`evidence_assets` sebagai katalog file sensitif. Endpoint metadata:
+
+```text
+GET  /api/v1/capture-events
+GET  /api/v1/capture-events/{id}
+GET  /api/v1/capture-events/{id}/assets
+POST /api/v1/capture-events/assets/{asset_id}/verify
+POST /api/v1/evidence/assets/{asset_id}/access
+GET  /api/v1/evidence/assets/{asset_id}/content
+```
+
+Daftar capture dan asset tidak mengekspos path filesystem atau storage key.
+Konten hanya dapat dibuka melalui grant singkat yang terikat ke user, versi
+sesi, asset ID, dan grant ID. Grant dan pembacaan konten selalu masuk audit log.
+
+Migration mempertahankan `events` dan `snapshots`. Record lama dibackfill
+menjadi capture event dan asset berstatus `UNVERIFIED`; endpoint verifikasi
+melakukan hashing streaming lalu mengenrol checksum pertama atau menandai file
+`MISSING`/`CORRUPT`. Detail tersedia di
+[`docs/audits/2026-07-24-phase3-capture-evidence-report.md`](docs/audits/2026-07-24-phase3-capture-evidence-report.md).
+
 ### Okupansi tahan gangguan kamera
 
 Jumlah orang saat ini berasal dari sesi keberadaan yang dibuka oleh event
@@ -412,13 +446,13 @@ app/
 ├── api/          HTTP routes, JWT, schema, DI, dan error handler
 ├── config/       Settings Pydantic dari .env
 ├── database/     Engine dan async SQLAlchemy session
-├── models/       Entitas ORM termasuk Camera, Event, topology, backup, dan katalog DR
-├── repository/   Query per entitas, topology, dan transaksi pipeline realtime
-├── services/     Kamera, topology, pipeline AI, crossing, backup/DR, dan scheduler
+├── models/       Entitas ORM termasuk topology, capture, evidence, backup, dan DR
+├── repository/   Query per entitas serta transaksi pipeline dan evidence
+├── services/     Kamera, topology, capture, pipeline AI, backup/DR, dan scheduler
 ├── detector/     Adapter YOLOv11
 ├── tracker/      Adapter ByteTrack + riwayat centroid
 ├── reid/         OSNet/TorchReID dan pencocokan embedding
-├── storage/      Snapshot JPEG dan metadata JSON
+├── storage/      Evidence image/JSON atomik dengan checksum
 ├── dashboard/    WebSocket hub realtime
 └── utils/        Logging, runtime CPU/GPU, dan CLI cutover DR offline
 alembic/          Migrasi PostgreSQL

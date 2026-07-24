@@ -416,7 +416,10 @@ class RealtimePipelineFactory:
         self._detector = DetectorService(settings)
         self._reidentification = PersonReIdentificationService(settings)
         self._snapshots = SnapshotService(settings)
-        self._persistence = PipelineRepository(session_factory)
+        self._persistence = PipelineRepository(
+            session_factory,
+            evidence_retention_days=settings.evidence_default_retention_days,
+        )
         self._inference_semaphore = asyncio.Semaphore(
             settings.ai_max_concurrent_inferences
         )

@@ -30,6 +30,8 @@ from app.models import (
     Camera,
     CameraRole,
     CameraZoneMapping,
+    CaptureEvent,
+    EvidenceAsset,
     Event,
     Person,
     PresenceSession,
@@ -43,18 +45,22 @@ from app.models import (
 from app.repository import AuditRepository, BackupRepository
 
 ARCHIVE_FORMAT = "cctv-people-flow-observational-backup"
-ARCHIVE_SCHEMA_VERSION = 3
+ARCHIVE_SCHEMA_VERSION = 4
 ARCHIVE_ENTITIES_V1 = frozenset(
     {"cameras", "persons", "trackings", "events", "snapshots", "users", "audit_logs"}
 )
 ARCHIVE_ENTITIES_V2 = ARCHIVE_ENTITIES_V1 | {"presence_sessions"}
-ARCHIVE_ENTITIES = ARCHIVE_ENTITIES_V2 | {
+ARCHIVE_ENTITIES_V3 = ARCHIVE_ENTITIES_V2 | {
     "buildings",
     "zones",
     "camera_roles",
     "camera_zone_mappings",
     "zone_adjacencies",
     "virtual_lines",
+}
+ARCHIVE_ENTITIES = ARCHIVE_ENTITIES_V3 | {
+    "capture_events",
+    "evidence_assets",
 }
 _backup_lock = asyncio.Lock()
 
@@ -231,7 +237,7 @@ class ArchiveCodec:
         if manifest.get("format") != ARCHIVE_FORMAT:
             raise ValueError("Archive format is not supported")
         schema_version = manifest.get("schema_version")
-        if schema_version not in {1, 2, ARCHIVE_SCHEMA_VERSION}:
+        if schema_version not in {1, 2, 3, ARCHIVE_SCHEMA_VERSION}:
             raise ValueError("Archive schema version is not supported")
         try:
             date.fromisoformat(manifest["backup_date"])
@@ -268,7 +274,8 @@ class ArchiveCodec:
         required_entities = {
             1: ARCHIVE_ENTITIES_V1,
             2: ARCHIVE_ENTITIES_V2,
-            3: ARCHIVE_ENTITIES,
+            3: ARCHIVE_ENTITIES_V3,
+            4: ARCHIVE_ENTITIES,
         }[schema_version]
         for entity in required_entities:
             member = f"data/{entity}.jsonl"
@@ -617,6 +624,37 @@ class BackupService:
                 )
             ).all()
         )
+        capture_events = list(
+            (
+                await session.scalars(
+                    select(CaptureEvent)
+                    .where(
+                        CaptureEvent.captured_at >= start_at,
+                        CaptureEvent.captured_at < end_at,
+                    )
+                    .order_by(CaptureEvent.captured_at)
+                )
+            ).all()
+        )
+        evidence_assets = list(
+            (
+                await session.scalars(
+                    select(EvidenceAsset)
+                    .join(
+                        CaptureEvent,
+                        CaptureEvent.id == EvidenceAsset.capture_event_id,
+                    )
+                    .where(
+                        CaptureEvent.captured_at >= start_at,
+                        CaptureEvent.captured_at < end_at,
+                    )
+                    .order_by(
+                        EvidenceAsset.captured_at,
+                        EvidenceAsset.sequence_index,
+                    )
+                )
+            ).all()
+        )
         presence_sessions = list(
             (
                 await session.scalars(
@@ -658,6 +696,20 @@ class BackupService:
                     media.append((member, metadata))
             snapshot_records.append(record)
 
+        evidence_records: list[dict[str, Any]] = []
+        for asset in evidence_assets:
+            record = _model_record(asset, excluded={"storage_key"})
+            if self.settings.backup_include_snapshots:
+                source = self._resolve_snapshot_path(asset.storage_key)
+                if source:
+                    member = (
+                        f"media/evidence/{asset.capture_event_id}/"
+                        f"{asset.id}{source.suffix.lower()}"
+                    )
+                    record["archive_storage_path"] = member
+                    media.append((member, source))
+            evidence_records.append(record)
+
         records = {
             "buildings": [_model_record(item) for item in buildings],
             "zones": [_model_record(item) for item in zones],
@@ -673,6 +725,10 @@ class BackupService:
             "persons": [_model_record(item, excluded={"reid_embedding"}) for item in persons],
             "trackings": [_model_record(item) for item in trackings],
             "events": [_model_record(item) for item in events],
+            "capture_events": [
+                _model_record(item) for item in capture_events
+            ],
+            "evidence_assets": evidence_records,
             "presence_sessions": [_model_record(item) for item in presence_sessions],
             "snapshots": snapshot_records,
             "users": [

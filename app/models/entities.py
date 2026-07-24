@@ -32,6 +32,35 @@ class EventType(StrEnum):
     EXIT = "EXIT"
 
 
+class CaptureEventStatus(StrEnum):
+    CAPTURED = "CAPTURED"
+    QUEUED = "QUEUED"
+    PROCESSING = "PROCESSING"
+    COMPLETED = "COMPLETED"
+    NEED_REVIEW = "NEED_REVIEW"
+    FAILED = "FAILED"
+    RETRYING = "RETRYING"
+    CANCELLED = "CANCELLED"
+
+
+class EvidenceAssetType(StrEnum):
+    ORIGINAL_SNAPSHOT = "ORIGINAL_SNAPSHOT"
+    ANNOTATED_SNAPSHOT = "ANNOTATED_SNAPSHOT"
+    FACE_CROP = "FACE_CROP"
+    PERIOCULAR_CROP = "PERIOCULAR_CROP"
+    FULL_BODY = "FULL_BODY"
+    THUMBNAIL = "THUMBNAIL"
+    VIDEO_CLIP = "VIDEO_CLIP"
+    METADATA_JSON = "METADATA_JSON"
+
+
+class EvidenceIntegrityStatus(StrEnum):
+    VERIFIED = "VERIFIED"
+    UNVERIFIED = "UNVERIFIED"
+    MISSING = "MISSING"
+    CORRUPT = "CORRUPT"
+
+
 class PresenceStatus(StrEnum):
     ACTIVE = "ACTIVE"
     UNCERTAIN = "UNCERTAIN"
@@ -451,6 +480,9 @@ class Event(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     tracking: Mapped[Tracking] = relationship(back_populates="events")
     snapshot: Mapped[Snapshot | None] = relationship(back_populates="event", cascade="all, delete-orphan", uselist=False)
+    capture_event: Mapped[CaptureEvent | None] = relationship(
+        back_populates="source_event", uselist=False
+    )
 
 
 class Snapshot(Base):
@@ -463,6 +495,123 @@ class Snapshot(Base):
     bbox: Mapped[dict[str, float]] = mapped_column(JSON)
     saved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     event: Mapped[Event] = relationship(back_populates="snapshot")
+    evidence_assets: Mapped[list[EvidenceAsset]] = relationship(
+        back_populates="legacy_snapshot"
+    )
+
+
+class CaptureEvent(Base):
+    """Immutable capture envelope created before asynchronous AI processing."""
+
+    __tablename__ = "capture_events"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    idempotency_key: Mapped[str] = mapped_column(String(160), unique=True)
+    source_event_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("events.id", ondelete="SET NULL"), unique=True
+    )
+    camera_id: Mapped[UUID] = mapped_column(
+        ForeignKey("cameras.id", ondelete="RESTRICT"), index=True
+    )
+    zone_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("zones.id", ondelete="SET NULL"), index=True
+    )
+    virtual_line_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("virtual_lines.id", ondelete="SET NULL"), index=True
+    )
+    tracking_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("trackings.id", ondelete="SET NULL"), index=True
+    )
+    status: Mapped[CaptureEventStatus] = mapped_column(
+        Enum(CaptureEventStatus, name="capture_event_status"),
+        default=CaptureEventStatus.CAPTURED,
+        index=True,
+    )
+    direction: Mapped[str | None] = mapped_column(String(20), index=True)
+    bbox: Mapped[dict[str, float] | None] = mapped_column(JSON)
+    centroid: Mapped[dict[str, float] | None] = mapped_column(JSON)
+    capture_quality: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    capture_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    processing_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    failed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+    source_event: Mapped[Event | None] = relationship(back_populates="capture_event")
+    camera: Mapped[Camera] = relationship()
+    zone: Mapped[Zone | None] = relationship()
+    virtual_line: Mapped[VirtualLine | None] = relationship()
+    tracking: Mapped[Tracking | None] = relationship()
+    evidence_assets: Mapped[list[EvidenceAsset]] = relationship(
+        back_populates="capture_event",
+        cascade="all, delete-orphan",
+        order_by="EvidenceAsset.sequence_index",
+    )
+
+
+class EvidenceAsset(Base):
+    """Content-addressed metadata for an immutable evidence object."""
+
+    __tablename__ = "evidence_assets"
+    __table_args__ = (
+        UniqueConstraint(
+            "capture_event_id",
+            "asset_type",
+            "sequence_index",
+            name="uq_evidence_capture_type_sequence",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    capture_event_id: Mapped[UUID] = mapped_column(
+        ForeignKey("capture_events.id", ondelete="CASCADE"), index=True
+    )
+    legacy_snapshot_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("snapshots.id", ondelete="SET NULL"), index=True
+    )
+    asset_type: Mapped[EvidenceAssetType] = mapped_column(
+        Enum(EvidenceAssetType, name="evidence_asset_type"), index=True
+    )
+    sequence_index: Mapped[int] = mapped_column(Integer, default=0)
+    storage_key: Mapped[str] = mapped_column(Text, unique=True)
+    checksum_sha256: Mapped[str | None] = mapped_column(String(64), index=True)
+    integrity_status: Mapped[EvidenceIntegrityStatus] = mapped_column(
+        Enum(EvidenceIntegrityStatus, name="evidence_integrity_status"),
+        default=EvidenceIntegrityStatus.VERIFIED,
+        index=True,
+    )
+    mime_type: Mapped[str] = mapped_column(String(100))
+    size_bytes: Mapped[int] = mapped_column(BigInteger)
+    width: Mapped[int | None] = mapped_column(Integer)
+    height: Mapped[int | None] = mapped_column(Integer)
+    duration_seconds: Mapped[float | None] = mapped_column(Float)
+    is_primary: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    asset_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    retention_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow
+    )
+    capture_event: Mapped[CaptureEvent] = relationship(
+        back_populates="evidence_assets"
+    )
+    legacy_snapshot: Mapped[Snapshot | None] = relationship(
+        back_populates="evidence_assets"
+    )
 
 
 class PresenceSession(Base):

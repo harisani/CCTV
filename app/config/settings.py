@@ -32,6 +32,8 @@ class Settings(BaseSettings):
 
     storage_path: Path = Path("storage")
     snapshot_jpeg_quality: int = Field(default=95, ge=1, le=100)
+    evidence_thumbnail_width: int = Field(default=320, ge=64, le=1920)
+    evidence_default_retention_days: int = Field(default=90, ge=1, le=3650)
     rtsp_url: str = ""
     yolo_model: str = "yolo11n.pt"
     confidence_threshold: float = Field(default=0.45, ge=0, le=1)

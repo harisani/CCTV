@@ -3,9 +3,19 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import uuid4
 
-from app.models import Event, PresenceStatus, Tracking
+from pathlib import Path
+
+from app.models import (
+    CaptureEvent,
+    EvidenceAsset,
+    EvidenceAssetType,
+    Event,
+    PresenceStatus,
+    Tracking,
+)
 from app.repository.pipeline_repository import PipelineRepository
 from app.services.crossing_service import CrossingEvent, CrossingType
+from app.storage import EvidenceFile, SnapshotResult
 from app.tracker import TrackedDetection
 
 
@@ -59,6 +69,69 @@ def tracked(track_id: int) -> TrackedDetection:
 
 
 class PipelineRepositoryPresenceTest(unittest.IsolatedAsyncioTestCase):
+    async def test_enter_persists_legacy_and_phase3_evidence_atomically(
+        self,
+    ) -> None:
+        database_tracking_id = uuid4()
+        camera_id = uuid4()
+        event_id = uuid4()
+        session = FakeSession(
+            SimpleNamespace(id=database_tracking_id, camera_id=camera_id),
+            [None, None, None],
+        )
+        repository = PipelineRepository(lambda: session)
+        image = Path("/tmp/phase3-annotated.jpg")
+        metadata = Path("/tmp/phase3-metadata.json")
+        evidence_file = EvidenceFile(
+            asset_id=uuid4(),
+            asset_type=EvidenceAssetType.ANNOTATED_SNAPSHOT,
+            sequence_index=0,
+            storage_key="2026/07/24/annotated.jpg",
+            path=image,
+            checksum_sha256="a" * 64,
+            mime_type="image/jpeg",
+            size_bytes=123,
+            is_primary=True,
+        )
+        snapshot = SnapshotResult(
+            snapshot_id=uuid4(),
+            image_path=image,
+            metadata_path=metadata,
+            capture_event_id=event_id,
+            idempotency_key=f"crossing:{event_id}",
+            assets=(evidence_file,),
+        )
+
+        created, payload = await repository.persist_crossing(
+            database_tracking_id=database_tracking_id,
+            person_id=uuid4(),
+            crossing=CrossingEvent(
+                event_id,
+                CrossingType.ENTER,
+                "door",
+                7,
+                (35, 65),
+                datetime.now(UTC),
+            ),
+            track=tracked(7),
+            snapshot=snapshot,
+            snapshot_error=None,
+        )
+
+        self.assertTrue(created)
+        self.assertEqual(payload["capture_event_id"], str(event_id))
+        self.assertEqual(payload["capture_status"], "CAPTURED")
+        captures = [
+            item for item in session.added if isinstance(item, CaptureEvent)
+        ]
+        assets = [
+            item for item in session.added if isinstance(item, EvidenceAsset)
+        ]
+        self.assertEqual(len(captures), 1)
+        self.assertEqual(captures[0].idempotency_key, f"crossing:{event_id}")
+        self.assertEqual(len(assets), 1)
+        self.assertEqual(assets[0].checksum_sha256, "a" * 64)
+
     async def test_orphan_exit_is_suppressed(self) -> None:
         database_tracking_id = uuid4()
         session = FakeSession(
@@ -101,7 +174,7 @@ class PipelineRepositoryPresenceTest(unittest.IsolatedAsyncioTestCase):
         )
         session = FakeSession(
             SimpleNamespace(id=database_tracking_id, camera_id=camera_id),
-            [None, open_presence],
+            [None, open_presence, None, None],
         )
         repository = PipelineRepository(lambda: session)
 

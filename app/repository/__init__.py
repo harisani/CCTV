@@ -3,6 +3,7 @@
 from app.repository.audit_repository import AuditRepository
 from app.repository.backup_repository import BackupRepository
 from app.repository.camera_repository import CameraRepository
+from app.repository.capture_evidence_repository import CaptureEvidenceRepository
 from app.repository.camera_runtime_repository import CameraRuntimeRepository
 from app.repository.disaster_recovery_repository import DisasterRecoveryRepository
 from app.repository.event_repository import EventRepository
@@ -17,6 +18,7 @@ __all__ = [
     "AuditRepository",
     "BackupRepository",
     "CameraRepository",
+    "CaptureEvidenceRepository",
     "CameraRuntimeRepository",
     "DisasterRecoveryRepository",
     "EventRepository",
