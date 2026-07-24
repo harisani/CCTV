@@ -8,7 +8,20 @@ from fastapi import HTTPException, status
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import AuditLog, Event, Person, PersonEmbedding, Tracking, User
+from app.models import (
+    AuditLog,
+    BiometricTemplate,
+    BodyCandidate,
+    BodyEmbedding,
+    CaptureEvent,
+    EvidenceAsset,
+    Event,
+    IdentityMatch,
+    Person,
+    PersonEmbedding,
+    Tracking,
+    User,
+)
 
 
 class PersonIdentityService:
@@ -41,6 +54,21 @@ class PersonIdentityService:
         )
         await self.session.execute(
             update(PersonEmbedding).where(PersonEmbedding.person_id.in_(unique_sources)).values(person_id=target_id)
+        )
+        await self.session.execute(
+            update(BodyEmbedding)
+            .where(BodyEmbedding.person_id.in_(unique_sources))
+            .values(person_id=target_id)
+        )
+        await self.session.execute(
+            update(BiometricTemplate)
+            .where(BiometricTemplate.person_id.in_(unique_sources))
+            .values(person_id=target_id)
+        )
+        await self.session.execute(
+            update(IdentityMatch)
+            .where(IdentityMatch.candidate_person_id.in_(unique_sources))
+            .values(candidate_person_id=target_id)
         )
         target.first_seen_at = min([target.first_seen_at, *(item.first_seen_at for item in sources)])
         target.last_seen_at = max([target.last_seen_at, *(item.last_seen_at for item in sources)])
@@ -117,7 +145,79 @@ class PersonIdentityService:
             .where(PersonEmbedding.tracking_id.in_(selected_ids))
             .values(person_id=new_person.id)
         )
-        new_person.needs_review = moved_templates == 0
+        selected_capture_ids = select(CaptureEvent.id).where(
+            CaptureEvent.tracking_id.in_(selected_ids)
+        )
+        selected_body_candidate_ids = select(BodyCandidate.id).where(
+            BodyCandidate.capture_event_id.in_(selected_capture_ids)
+        )
+        moved_body_embeddings = int(
+            await self.session.scalar(
+                select(func.count(BodyEmbedding.id)).where(
+                    BodyEmbedding.body_candidate_id.in_(
+                        selected_body_candidate_ids
+                    ),
+                    BodyEmbedding.person_id == source_id,
+                )
+            )
+            or 0
+        )
+        await self.session.execute(
+            update(BodyEmbedding)
+            .where(
+                BodyEmbedding.body_candidate_id.in_(
+                    selected_body_candidate_ids
+                ),
+                BodyEmbedding.person_id == source_id,
+            )
+            .values(person_id=new_person.id)
+        )
+        selected_asset_ids = select(EvidenceAsset.id).where(
+            EvidenceAsset.capture_event_id.in_(selected_capture_ids)
+        )
+        moved_biometric_templates = int(
+            await self.session.scalar(
+                select(func.count(BiometricTemplate.id)).where(
+                    BiometricTemplate.source_asset_id.in_(
+                        selected_asset_ids
+                    ),
+                    BiometricTemplate.person_id == source_id,
+                )
+            )
+            or 0
+        )
+        await self.session.execute(
+            update(BiometricTemplate)
+            .where(
+                BiometricTemplate.source_asset_id.in_(selected_asset_ids),
+                BiometricTemplate.person_id == source_id,
+            )
+            .values(person_id=new_person.id)
+        )
+        moved_identity_matches = int(
+            await self.session.scalar(
+                select(func.count(IdentityMatch.id)).where(
+                    IdentityMatch.capture_event_id.in_(
+                        selected_capture_ids
+                    ),
+                    IdentityMatch.candidate_person_id == source_id,
+                )
+            )
+            or 0
+        )
+        await self.session.execute(
+            update(IdentityMatch)
+            .where(
+                IdentityMatch.capture_event_id.in_(selected_capture_ids),
+                IdentityMatch.candidate_person_id == source_id,
+            )
+            .values(candidate_person_id=new_person.id)
+        )
+        moved_reference_count = (
+            moved_templates + moved_body_embeddings
+            + moved_biometric_templates
+        )
+        new_person.needs_review = moved_reference_count == 0
         source.identity_version += 1
         source.needs_review = False
         self.session.add(
@@ -131,6 +231,11 @@ class PersonIdentityService:
                     "new_person_id": str(new_person.id),
                     "tracking_ids": [str(item) for item in selected_ids],
                     "moved_embedding_count": moved_templates,
+                    "moved_body_embedding_count": moved_body_embeddings,
+                    "moved_biometric_template_count": (
+                        moved_biometric_templates
+                    ),
+                    "moved_identity_match_count": moved_identity_matches,
                 },
             )
         )

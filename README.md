@@ -70,6 +70,10 @@ scrypt di PostgreSQL, bukan kembali ke `.env`.
   the similarity threshold and the separation from the next distinct subject
   are sufficient. Ambiguous/probable results require review and raw embeddings
   are never returned by the API.
+- Phase 7 moves OSNet body ReID and APD analysis to the durable asynchronous
+  queue. A body-only similarity is never promoted directly to `CONFIRMED`;
+  custom APD weights are checksum-verified and an absent model is reported as
+  `MODEL_UNAVAILABLE`, not interpreted as missing equipment.
 - Snapshot list responses expose stable snapshot/event IDs, bounding boxes, and
   timestamps only. Server filesystem paths for images and metadata remain
   internal persistence details and are never part of the public API contract.
@@ -110,9 +114,10 @@ storage/backups/YYYY/MM/YYYYMMDD_<uuid>.zip
 ```
 
 ZIP memuat `manifest.json`, dataset JSON Lines, snapshot lama, capture event,
-evidence asset, kandidat wajah/periocular, dan hasil identity matching. Embedding
-referensi tidak dimasukkan ke backup observasional; embedding tetap tersedia
-dalam backup DR terenkripsi. Setiap member memiliki checksum SHA-256. File dibuat secara atomik;
+evidence asset, kandidat wajah/periocular/full-body, observasi APD, dan hasil
+identity matching. Embedding referensi tidak dimasukkan ke backup
+observasional; embedding tetap tersedia dalam backup DR terenkripsi. Setiap
+member memiliki checksum SHA-256. File dibuat secara atomik;
 job yang terputus akibat restart ditandai `FAILED` saat startup dan dapat dibuat
 ulang secara manual. Backup otomatis yang lebih tua dari
 `BACKUP_RETENTION_DAYS` dibersihkan, sedangkan arsip yang di-import tidak ikut
@@ -188,6 +193,55 @@ menggunakan `FACE_CROP` yang sudah tersimpan:
 mengaitkan employee tanpa mengubah format template. Threshold pada `.env`
 merupakan baseline konservatif dan wajib dikalibrasi menggunakan data CCTV,
 masker, APD, sudut, serta pencahayaan lokasi sebenarnya sebelum produksi.
+
+## Phase 7: Full-body ReID dan observasi APD
+
+Setelah face/periocular selesai, durable queue melanjutkan dua job:
+`BODY_REIDENTIFICATION` lalu `PPE_ANALYSIS`. Tahap capture realtime tetap ringan
+karena `ENABLE_REALTIME_REID=false` secara default. Full-body evidence yang
+sudah dibuat saat crossing dinilai berdasarkan confidence detektor, ukuran,
+ketajaman, dan rasio tubuh sebelum diproses OSNet.
+
+Embedding OSNet 512 dimensi disimpan di PostgreSQL/pgvector dan tidak pernah
+dikembalikan oleh API. Referensi body mendapat `person_id` hanya ketika wajah
+pada capture yang sama sudah `CONFIRMED`. Keputusan body dibuat konservatif:
+
+- `CONFIRMED`: hanya dari anchor wajah pada capture yang sama;
+- `PROBABLE`: body match melewati threshold dan masih perlu review/korelasi;
+- `CONFLICT`: dua identitas teratas terlalu berdekatan;
+- `UNKNOWN`: tidak ada referensi atau similarity di bawah threshold;
+- `UNRESOLVED`: tidak ada full-body candidate yang memenuhi kualitas minimum.
+
+APD menggunakan bobot YOLO khusus lokasi karena label dan bentuk APD berbeda
+antarperusahaan. Project tidak menyertakan model APD generik yang seolah-olah
+siap produksi. Bila `PPE_MODEL_PATH` kosong atau file/checksum tidak valid,
+hasil disimpan sebagai `MODEL_UNAVAILABLE`. Sistem tetap dapat mencatat warna
+dominan torso sebagai observation fact, tetapi tidak menyimpulkan kepatuhan
+kebijakan. Evaluasi policy dan alert merupakan scope Phase 10.
+
+Konfigurasi minimum model APD:
+
+```dotenv
+PPE_ANALYSIS_ENABLED=true
+PPE_MODEL_PATH=/models/site-ppe.pt
+PPE_MODEL_VERSION=site-ppe-2026-01
+PPE_MODEL_SHA256=<sha256-file-model>
+PPE_CLASS_MAP={"helmet":"HELMET_PRESENT","no-helmet":"HELMET_MISSING"}
+```
+
+Mount file model ke container API pada path yang sama. Pada production,
+`PPE_MODEL_SHA256` wajib 64 karakter heksadesimal. Endpoint read-only
+terautentikasi:
+
+```text
+GET /api/v1/body-analysis/configuration
+GET /api/v1/body-analysis/candidates
+GET /api/v1/body-analysis/embeddings
+GET /api/v1/body-analysis/ppe
+```
+
+Seluruh endpoint mendukung pagination dan filter yang relevan. Response
+embedding hanya berisi metadata, bukan nilai vector sensitif.
 
 ## Disaster Recovery penuh
 

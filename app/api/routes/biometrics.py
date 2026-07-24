@@ -20,6 +20,7 @@ from app.api.dependencies import (
 from app.api.schemas import Page
 from app.api.security import require_authenticated_user, require_roles
 from app.models import (
+    BiometricModality,
     IdentityDecision,
     IdentityReviewStatus,
     User,
@@ -56,6 +57,7 @@ async def list_face_candidates(
 
 @router.get("/matches", response_model=Page[IdentityMatchResponse])
 async def list_identity_matches(
+    modality: BiometricModality | None = None,
     decision: IdentityDecision | None = None,
     review_status: IdentityReviewStatus | None = None,
     capture_id: UUID | None = None,
@@ -66,6 +68,7 @@ async def list_identity_matches(
     ),
 ) -> Page[IdentityMatchResponse]:
     items, total = await service.list_matches(
+        modality=modality,
         decision=decision,
         review_status=review_status,
         capture_id=capture_id,

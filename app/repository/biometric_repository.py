@@ -252,6 +252,7 @@ class BiometricRepository(BaseRepository[FaceCandidate]):
     async def list_matches(
         self,
         *,
+        modality: BiometricModality | None,
         decision: IdentityDecision | None,
         review_status: IdentityReviewStatus | None,
         capture_id: UUID | None,
@@ -259,6 +260,8 @@ class BiometricRepository(BaseRepository[FaceCandidate]):
         limit: int,
     ) -> tuple[list[IdentityMatch], int]:
         filters = []
+        if modality is not None:
+            filters.append(IdentityMatch.modality == modality)
         if decision is not None:
             filters.append(IdentityMatch.decision == decision)
         if review_status is not None:

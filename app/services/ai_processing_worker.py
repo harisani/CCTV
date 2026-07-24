@@ -14,7 +14,12 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.ai import BiometricModelUnavailable, OpenCVBiometricService
+from app.ai import (
+    BiometricModelUnavailable,
+    BodyAnalysisEngine,
+    BodyModelUnavailable,
+    OpenCVBiometricService,
+)
 from app.models import (
     AIJobType,
     AIProcessingJob,
@@ -23,7 +28,9 @@ from app.models import (
     EvidenceAsset,
 )
 from app.repository import AIJobRepository, BiometricRepository
+from app.repository import BodyAnalysisRepository
 from app.services.biometric_identity_service import BiometricIdentityService
+from app.services.body_analysis_service import BodyAnalysisService
 
 
 class RetryableJobError(RuntimeError):
@@ -170,21 +177,110 @@ class IdentityCorrelationHandler:
                 if result.needs_review
                 else CaptureEventStatus.COMPLETED
             ),
+            next_job_type=AIJobType.BODY_REIDENTIFICATION,
+            next_payload={"capture_event_id": str(job.capture_event_id)},
+        )
+
+
+class BodyReIdentificationHandler:
+    def __init__(
+        self, session_factory: Any, settings: Any, engine: Any
+    ) -> None:
+        self._session_factory = session_factory
+        self._settings = settings
+        self._engine = engine
+
+    async def handle(self, job: AIProcessingJob) -> HandlerResult:
+        try:
+            async with self._session_factory() as session:
+                service = BodyAnalysisService(
+                    BodyAnalysisRepository(session),
+                    self._settings,
+                    engine=self._engine,
+                )
+                result = await service.process_body(job.capture_event_id)
+        except (LookupError, ValueError, BodyModelUnavailable) as error:
+            raise PermanentJobError(str(error)) from error
+        return HandlerResult(
+            result={
+                "stage": "BODY_REIDENTIFICATION",
+                "identity_match_id": str(result.match.id),
+                "decision": result.match.decision.value,
+                "candidate_person_id": (
+                    str(result.match.candidate_person_id)
+                    if result.match.candidate_person_id
+                    else None
+                ),
+                "embedding_id": (
+                    str(result.embedding_id)
+                    if result.embedding_id
+                    else None
+                ),
+                "candidate_count": result.candidate_count,
+                "needs_review": result.needs_review,
+                "next_stage": "PPE_ANALYSIS",
+            },
+            next_job_type=AIJobType.PPE_ANALYSIS,
+            next_payload={"capture_event_id": str(job.capture_event_id)},
+        )
+
+
+class PPEAnalysisHandler:
+    def __init__(
+        self, session_factory: Any, settings: Any, engine: Any
+    ) -> None:
+        self._session_factory = session_factory
+        self._settings = settings
+        self._engine = engine
+
+    async def handle(self, job: AIProcessingJob) -> HandlerResult:
+        try:
+            async with self._session_factory() as session:
+                service = BodyAnalysisService(
+                    BodyAnalysisRepository(session),
+                    self._settings,
+                    engine=self._engine,
+                )
+                result = await service.process_ppe(job.capture_event_id)
+        except (LookupError, ValueError) as error:
+            raise PermanentJobError(str(error)) from error
+        analysis = result.analysis
+        return HandlerResult(
+            result={
+                "stage": "PPE_ANALYSIS",
+                "ppe_analysis_id": str(analysis.id),
+                "status": analysis.status.value,
+                "confidence_score": analysis.confidence_score,
+                "observed_items": analysis.observed_items,
+                "capture_needs_review": result.capture_needs_review,
+            },
+            capture_status=(
+                CaptureEventStatus.NEED_REVIEW
+                if result.capture_needs_review
+                else CaptureEventStatus.COMPLETED
+            ),
         )
 
 
 class AIJobHandlerRegistry:
     def __init__(self, session_factory: Any, settings: Any) -> None:
-        engine = OpenCVBiometricService(settings)
+        biometric_engine = OpenCVBiometricService(settings)
+        body_engine = BodyAnalysisEngine(settings)
         self._handlers: dict[AIJobType, AIJobHandler] = {
             AIJobType.CAPTURE_INGESTION: CaptureIngestionHandler(
                 session_factory
             ),
             AIJobType.PERSON_DETECTION: FaceCandidateSelectionHandler(
-                session_factory, settings, engine
+                session_factory, settings, biometric_engine
             ),
             AIJobType.IDENTITY_CORRELATION: IdentityCorrelationHandler(
-                session_factory, settings, engine
+                session_factory, settings, biometric_engine
+            ),
+            AIJobType.BODY_REIDENTIFICATION: BodyReIdentificationHandler(
+                session_factory, settings, body_engine
+            ),
+            AIJobType.PPE_ANALYSIS: PPEAnalysisHandler(
+                session_factory, settings, body_engine
             ),
         }
 

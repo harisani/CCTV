@@ -28,6 +28,8 @@ from app.models import (
     BackupSource,
     BackupStatus,
     BiometricTemplate,
+    BodyCandidate,
+    BodyEmbedding,
     Building,
     Camera,
     CameraRole,
@@ -39,6 +41,7 @@ from app.models import (
     IdentityMatch,
     ModelVersion,
     Person,
+    PPEAnalysis,
     PresenceSession,
     Snapshot,
     Tracking,
@@ -51,7 +54,7 @@ from app.models import (
 from app.repository import AuditRepository, BackupRepository
 
 ARCHIVE_FORMAT = "cctv-people-flow-observational-backup"
-ARCHIVE_SCHEMA_VERSION = 7
+ARCHIVE_SCHEMA_VERSION = 8
 ARCHIVE_ENTITIES_V1 = frozenset(
     {"cameras", "persons", "trackings", "events", "snapshots", "users", "audit_logs"}
 )
@@ -70,11 +73,16 @@ ARCHIVE_ENTITIES_V4 = ARCHIVE_ENTITIES_V3 | {
 }
 ARCHIVE_ENTITIES_V5 = ARCHIVE_ENTITIES_V4 | {"ai_processing_jobs"}
 ARCHIVE_ENTITIES_V6 = ARCHIVE_ENTITIES_V5 | {"zone_events"}
-ARCHIVE_ENTITIES = ARCHIVE_ENTITIES_V6 | {
+ARCHIVE_ENTITIES_V7 = ARCHIVE_ENTITIES_V6 | {
     "model_versions",
     "face_candidates",
     "biometric_templates",
     "identity_matches",
+}
+ARCHIVE_ENTITIES = ARCHIVE_ENTITIES_V7 | {
+    "body_candidates",
+    "body_embeddings",
+    "ppe_analyses",
 }
 _backup_lock = asyncio.Lock()
 
@@ -251,14 +259,10 @@ class ArchiveCodec:
         if manifest.get("format") != ARCHIVE_FORMAT:
             raise ValueError("Archive format is not supported")
         schema_version = manifest.get("schema_version")
-        if schema_version not in {
-            1,
-            2,
-            3,
-            4,
-            5,
-            ARCHIVE_SCHEMA_VERSION,
-        }:
+        if (
+            not isinstance(schema_version, int)
+            or not 1 <= schema_version <= ARCHIVE_SCHEMA_VERSION
+        ):
             raise ValueError("Archive schema version is not supported")
         try:
             date.fromisoformat(manifest["backup_date"])
@@ -299,7 +303,8 @@ class ArchiveCodec:
             4: ARCHIVE_ENTITIES_V4,
             5: ARCHIVE_ENTITIES_V5,
             6: ARCHIVE_ENTITIES_V6,
-            7: ARCHIVE_ENTITIES,
+            7: ARCHIVE_ENTITIES_V7,
+            8: ARCHIVE_ENTITIES,
         }[schema_version]
         for entity in required_entities:
             member = f"data/{entity}.jsonl"
@@ -728,6 +733,58 @@ class BackupService:
                 )
             ).all()
         )
+        body_candidates = list(
+            (
+                await session.scalars(
+                    select(BodyCandidate)
+                    .join(
+                        CaptureEvent,
+                        CaptureEvent.id == BodyCandidate.capture_event_id,
+                    )
+                    .where(
+                        CaptureEvent.captured_at >= start_at,
+                        CaptureEvent.captured_at < end_at,
+                    )
+                    .order_by(BodyCandidate.captured_at)
+                )
+            ).all()
+        )
+        body_embeddings = list(
+            (
+                await session.scalars(
+                    select(BodyEmbedding)
+                    .join(
+                        BodyCandidate,
+                        BodyCandidate.id == BodyEmbedding.body_candidate_id,
+                    )
+                    .join(
+                        CaptureEvent,
+                        CaptureEvent.id == BodyCandidate.capture_event_id,
+                    )
+                    .where(
+                        CaptureEvent.captured_at >= start_at,
+                        CaptureEvent.captured_at < end_at,
+                    )
+                    .order_by(BodyEmbedding.captured_at)
+                )
+            ).all()
+        )
+        ppe_analyses = list(
+            (
+                await session.scalars(
+                    select(PPEAnalysis)
+                    .join(
+                        CaptureEvent,
+                        CaptureEvent.id == PPEAnalysis.capture_event_id,
+                    )
+                    .where(
+                        CaptureEvent.captured_at >= start_at,
+                        CaptureEvent.captured_at < end_at,
+                    )
+                    .order_by(PPEAnalysis.analyzed_at)
+                )
+            ).all()
+        )
         biometric_templates = list(
             (
                 await session.scalars(
@@ -754,6 +811,12 @@ class BackupService:
             *(item.detector_model_version_id for item in face_candidates),
             *(item.model_version_id for item in identity_matches),
             *(item.model_version_id for item in biometric_templates),
+            *(item.model_version_id for item in body_embeddings),
+            *(
+                item.model_version_id
+                for item in ppe_analyses
+                if item.model_version_id is not None
+            ),
         }
         model_versions = (
             list(
@@ -880,6 +943,16 @@ class BackupService:
             ],
             "identity_matches": [
                 _model_record(item) for item in identity_matches
+            ],
+            "body_candidates": [
+                _model_record(item) for item in body_candidates
+            ],
+            "body_embeddings": [
+                _model_record(item, excluded={"embedding"})
+                for item in body_embeddings
+            ],
+            "ppe_analyses": [
+                _model_record(item) for item in ppe_analyses
             ],
             "zone_events": [_model_record(item) for item in zone_events],
             "presence_sessions": [_model_record(item) for item in presence_sessions],

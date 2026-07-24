@@ -5,9 +5,17 @@ from app.ai.biometric_service import (
     FaceCandidateObservation,
     OpenCVBiometricService,
 )
+from app.ai.body_analysis_service import (
+    BodyAnalysisEngine,
+    BodyModelUnavailable,
+    PPEInference,
+)
 
 __all__ = [
     "BiometricModelUnavailable",
     "FaceCandidateObservation",
     "OpenCVBiometricService",
+    "BodyAnalysisEngine",
+    "BodyModelUnavailable",
+    "PPEInference",
 ]

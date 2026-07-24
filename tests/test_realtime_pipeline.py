@@ -23,6 +23,7 @@ class PipelineSettings:
     reid_min_crop_height = 10
     reid_min_quality_score = 0.45
     storage_path = "storage"
+    enable_realtime_reid = False
 
 
 class FakeDetector:
@@ -118,11 +119,13 @@ class FakePersistence:
         self.closed = 0
         self.fail_event_once = fail_event_once
         self.reject_event = reject_event
+        self.identify_calls = 0
 
     async def close_camera_trackings(self, _camera_id: UUID) -> None:
         pass
 
     async def identify_person(self, _service: object, _embedding: object, **_fields: object) -> object:
+        self.identify_calls += 1
         return SimpleNamespace(person_id=self.person_id, embedding_id=uuid4())
 
     async def link_embedding(self, _embedding_id: UUID, _tracking_id: UUID) -> None:
@@ -218,6 +221,7 @@ class RealtimePipelineTest(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("snapshot_path", second.events[0])
             self.assertEqual(second.occupancy["total"], 1)
             self.assertEqual(persistence.persisted, 1)
+            self.assertEqual(persistence.identify_calls, 0)
             self.assertTrue((Path(directory) / "event.jpg").is_file())
 
             await pipeline.stop()

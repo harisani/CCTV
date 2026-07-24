@@ -1,3 +1,5 @@
+import json
+import string
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -62,6 +64,10 @@ class Settings(BaseSettings):
     crossing_event_cooldown_frames: int = Field(default=3, ge=0)
 
     reid_model: str = "osnet_x1_0"
+    reid_model_version: str = "torchreid-imagenet-v1"
+    reid_model_artifact_path: Path = Path(
+        "/service/.cache/torch/checkpoints/osnet_x1_0_imagenet.pth"
+    )
     reid_device: str = "auto"
     reid_image_width: int = Field(default=128, gt=0)
     reid_image_height: int = Field(default=256, gt=0)
@@ -76,6 +82,30 @@ class Settings(BaseSettings):
     reid_max_embeddings_per_person: int = Field(default=20, gt=0)
     reid_retention_interval_hours: int = Field(default=24, gt=0)
     enable_reid_retention: bool = True
+    enable_realtime_reid: bool = False
+    body_max_candidates: int = Field(default=3, ge=1, le=20)
+    body_min_aspect_ratio: float = Field(default=0.2, gt=0, le=2)
+    body_max_aspect_ratio: float = Field(default=1.2, gt=0, le=4)
+
+    ppe_analysis_enabled: bool = True
+    ppe_model_path: str = ""
+    ppe_model_version: str = "site-ppe-unconfigured"
+    ppe_model_sha256: str = ""
+    ppe_device: str = "auto"
+    ppe_confidence_threshold: float = Field(default=0.45, ge=0, le=1)
+    ppe_image_size: int = Field(default=640, ge=128, le=2048)
+    ppe_max_detections: int = Field(default=50, ge=1, le=500)
+    ppe_half_precision: bool = True
+    ppe_class_map: str = (
+        '{"helmet":"HELMET_PRESENT","hardhat":"HELMET_PRESENT",'
+        '"no-helmet":"HELMET_MISSING","no_hardhat":"HELMET_MISSING",'
+        '"vest":"VEST_PRESENT","safety-vest":"VEST_PRESENT",'
+        '"no-vest":"VEST_MISSING","mask":"MASK_PRESENT",'
+        '"no-mask":"MASK_MISSING","gloves":"GLOVES_PRESENT",'
+        '"boots":"BOOTS_PRESENT"}'
+    )
+    ppe_color_analysis_enabled: bool = True
+    ppe_color_min_saturation: int = Field(default=45, ge=0, le=255)
 
     jwt_secret: str = Field(repr=False)
     jwt_algorithm: str = "HS256"
@@ -212,6 +242,20 @@ class Settings(BaseSettings):
                 "BIOMETRIC_PROBABLE_THRESHOLD must not exceed "
                 "BIOMETRIC_CONFIRMED_THRESHOLD"
             )
+        if self.body_min_aspect_ratio >= self.body_max_aspect_ratio:
+            raise ValueError(
+                "BODY_MIN_ASPECT_RATIO must be lower than "
+                "BODY_MAX_ASPECT_RATIO"
+            )
+        try:
+            class_map = json.loads(self.ppe_class_map)
+        except (TypeError, ValueError) as error:
+            raise ValueError("PPE_CLASS_MAP must be valid JSON") from error
+        if not isinstance(class_map, dict) or not all(
+            isinstance(key, str) and isinstance(value, str)
+            for key, value in class_map.items()
+        ):
+            raise ValueError("PPE_CLASS_MAP must map strings to strings")
         if self.app_env != "production":
             return self
 
@@ -250,6 +294,17 @@ class Settings(BaseSettings):
             errors.append(
                 "DR_ENCRYPTION_PASSPHRASE must contain at least 16 characters when DR is enabled"
             )
+        if self.ppe_model_path and (
+            len(self.ppe_model_sha256) != 64
+            or any(
+                character not in string.hexdigits
+                for character in self.ppe_model_sha256
+            )
+        ):
+            errors.append(
+                "PPE_MODEL_SHA256 must contain 64 hex characters when "
+                "PPE_MODEL_PATH is configured in production"
+            )
         if errors:
             raise ValueError("; ".join(errors))
         return self
@@ -258,6 +313,13 @@ class Settings(BaseSettings):
     def cors_origins(self) -> list[str]:
         """Return configured browser origins as a list."""
         return [origin.strip() for origin in self.cors_allowed_origins.split(",") if origin.strip()]
+
+    @property
+    def ppe_class_mapping(self) -> dict[str, str]:
+        return {
+            str(key).strip().casefold(): str(value).strip().upper()
+            for key, value in json.loads(self.ppe_class_map).items()
+        }
 
     @computed_field
     @property

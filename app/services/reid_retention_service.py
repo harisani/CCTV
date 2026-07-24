@@ -9,7 +9,7 @@ from typing import Any
 
 from sqlalchemy import delete, select
 
-from app.models import PersonEmbedding
+from app.models import BodyEmbedding, PersonEmbedding
 
 
 class ReIdRetentionService:
@@ -55,7 +55,7 @@ class ReIdRetentionService:
     async def apply(self, *, now: datetime | None = None) -> int:
         now = now or datetime.now(UTC)
         async with self.session_factory() as session:
-            rows = (
+            person_rows = (
                 await session.execute(
                     select(
                         PersonEmbedding.id,
@@ -69,20 +69,69 @@ class ReIdRetentionService:
                     .order_by(PersonEmbedding.person_id, PersonEmbedding.quality_score.desc(), PersonEmbedding.captured_at.desc())
                 )
             ).all()
-            grouped: dict[Any, list[Any]] = {}
-            for row in rows:
-                grouped.setdefault(row.person_id, []).append(row)
-            delete_ids = []
-            minimum = self.settings.reid_min_embeddings_per_person
-            maximum = self.settings.reid_max_embeddings_per_person
-            for templates in grouped.values():
-                protected = {item.id for item in templates[:minimum]}
-                for index, item in enumerate(templates):
-                    expired = item.expires_at is not None and item.expires_at <= now
-                    excess = index >= maximum
-                    if item.id not in protected and (expired or excess):
-                        delete_ids.append(item.id)
-            if delete_ids:
-                await session.execute(delete(PersonEmbedding).where(PersonEmbedding.id.in_(delete_ids)))
+            body_rows = (
+                await session.execute(
+                    select(
+                        BodyEmbedding.id,
+                        BodyEmbedding.person_id,
+                        BodyEmbedding.quality_score,
+                        BodyEmbedding.expires_at,
+                        BodyEmbedding.captured_at,
+                    )
+                    .where(BodyEmbedding.active.is_(True))
+                    .order_by(
+                        BodyEmbedding.person_id,
+                        BodyEmbedding.quality_score.desc(),
+                        BodyEmbedding.captured_at.desc(),
+                    )
+                )
+            ).all()
+            person_delete_ids = self._expired_or_excess(
+                person_rows, now=now, protect_unlabeled=False
+            )
+            body_delete_ids = self._expired_or_excess(
+                body_rows, now=now, protect_unlabeled=False
+            )
+            if person_delete_ids:
+                await session.execute(
+                    delete(PersonEmbedding).where(
+                        PersonEmbedding.id.in_(person_delete_ids)
+                    )
+                )
+            if body_delete_ids:
+                await session.execute(
+                    delete(BodyEmbedding).where(
+                        BodyEmbedding.id.in_(body_delete_ids)
+                    )
+                )
+            if person_delete_ids or body_delete_ids:
                 await session.commit()
-            return len(delete_ids)
+            return len(person_delete_ids) + len(body_delete_ids)
+
+    def _expired_or_excess(
+        self,
+        rows: list[Any],
+        *,
+        now: datetime,
+        protect_unlabeled: bool,
+    ) -> list[Any]:
+        grouped: dict[Any, list[Any]] = {}
+        for row in rows:
+            grouped.setdefault(row.person_id, []).append(row)
+        delete_ids = []
+        minimum = self.settings.reid_min_embeddings_per_person
+        maximum = self.settings.reid_max_embeddings_per_person
+        for person_id, templates in grouped.items():
+            protected = (
+                {item.id for item in templates[:minimum]}
+                if person_id is not None or protect_unlabeled
+                else set()
+            )
+            for index, item in enumerate(templates):
+                expired = (
+                    item.expires_at is not None and item.expires_at <= now
+                )
+                excess = person_id is not None and index >= maximum
+                if item.id not in protected and (expired or excess):
+                    delete_ids.append(item.id)
+        return delete_ids

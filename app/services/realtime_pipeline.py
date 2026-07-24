@@ -238,6 +238,8 @@ class CameraRealtimePipeline:
     async def _identify_once(
         self, frame: Any, track: TrackedDetection, captured_at: datetime
     ) -> UUID | None:
+        if not getattr(self._settings, "enable_realtime_reid", False):
+            return None
         if track.tracking_id in self._person_ids:
             return self._person_ids[track.tracking_id]
         x1, y1, x2, y2 = track.bbox

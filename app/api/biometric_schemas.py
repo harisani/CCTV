@@ -38,7 +38,9 @@ class IdentityMatchResponse(BaseModel):
     id: UUID
     capture_event_id: UUID
     face_candidate_id: UUID | None
+    body_candidate_id: UUID | None
     matched_template_id: UUID | None
+    matched_body_embedding_id: UUID | None
     candidate_person_id: UUID | None
     candidate_external_subject_key: str | None
     modality: BiometricModality

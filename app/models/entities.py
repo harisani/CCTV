@@ -81,6 +81,8 @@ class AIJobType(StrEnum):
     CAPTURE_INGESTION = "CAPTURE_INGESTION"
     PERSON_DETECTION = "PERSON_DETECTION"
     IDENTITY_CORRELATION = "IDENTITY_CORRELATION"
+    BODY_REIDENTIFICATION = "BODY_REIDENTIFICATION"
+    PPE_ANALYSIS = "PPE_ANALYSIS"
     JOURNEY_CORRELATION = "JOURNEY_CORRELATION"
     OCCUPANCY_UPDATE = "OCCUPANCY_UPDATE"
     POLICY_EVALUATION = "POLICY_EVALUATION"
@@ -89,6 +91,7 @@ class AIJobType(StrEnum):
 class BiometricModality(StrEnum):
     FACE = "FACE"
     PERIOCULAR = "PERIOCULAR"
+    BODY = "BODY"
 
 
 class IdentityDecision(StrEnum):
@@ -104,6 +107,14 @@ class IdentityReviewStatus(StrEnum):
     PENDING = "PENDING"
     APPROVED = "APPROVED"
     REJECTED = "REJECTED"
+
+
+class PPEAnalysisStatus(StrEnum):
+    COMPLETED = "COMPLETED"
+    PARTIAL = "PARTIAL"
+    UNRESOLVED = "UNRESOLVED"
+    MODEL_UNAVAILABLE = "MODEL_UNAVAILABLE"
+    FAILED = "FAILED"
 
 
 class PresenceStatus(StrEnum):
@@ -670,6 +681,117 @@ class FaceCandidate(Base):
     )
 
 
+class BodyCandidate(Base):
+    """Quality-scored immutable full-body evidence for ReID and PPE."""
+
+    __tablename__ = "body_candidates"
+    __table_args__ = (
+        UniqueConstraint(
+            "capture_event_id",
+            "sequence_index",
+            name="uq_body_candidate_capture_sequence",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    capture_event_id: Mapped[UUID] = mapped_column(
+        ForeignKey("capture_events.id", ondelete="CASCADE"), index=True
+    )
+    body_asset_id: Mapped[UUID] = mapped_column(
+        ForeignKey("evidence_assets.id", ondelete="RESTRICT"), index=True
+    )
+    sequence_index: Mapped[int] = mapped_column(Integer)
+    bbox: Mapped[dict[str, float] | None] = mapped_column(JSONB)
+    detector_confidence: Mapped[float | None] = mapped_column(Float)
+    quality_score: Mapped[float] = mapped_column(Float, index=True)
+    quality_metrics: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    selected: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    rejection_reason: Mapped[str | None] = mapped_column(String(160))
+    captured_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow
+    )
+
+
+class BodyEmbedding(Base):
+    """OSNet feature tied to body evidence; vector is never exposed by API."""
+
+    __tablename__ = "body_embeddings"
+    __table_args__ = (
+        UniqueConstraint(
+            "body_candidate_id",
+            "model_version_id",
+            name="uq_body_embedding_candidate_model",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    body_candidate_id: Mapped[UUID] = mapped_column(
+        ForeignKey("body_candidates.id", ondelete="CASCADE"), index=True
+    )
+    person_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("persons.id", ondelete="SET NULL"), index=True
+    )
+    model_version_id: Mapped[UUID] = mapped_column(
+        ForeignKey("model_versions.id", ondelete="RESTRICT"), index=True
+    )
+    embedding: Mapped[list[float]] = mapped_column(Vector(512))
+    quality_score: Mapped[float] = mapped_column(Float, index=True)
+    source: Mapped[str] = mapped_column(String(80), index=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    captured_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow
+    )
+
+
+class PPEAnalysis(Base):
+    """Model observations only; policy compliance is evaluated in Phase 10."""
+
+    __tablename__ = "ppe_analyses"
+    __table_args__ = (
+        UniqueConstraint(
+            "capture_event_id",
+            name="uq_ppe_analysis_capture",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    capture_event_id: Mapped[UUID] = mapped_column(
+        ForeignKey("capture_events.id", ondelete="CASCADE"), index=True
+    )
+    body_candidate_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("body_candidates.id", ondelete="SET NULL"), index=True
+    )
+    model_version_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("model_versions.id", ondelete="RESTRICT"), index=True
+    )
+    status: Mapped[PPEAnalysisStatus] = mapped_column(
+        Enum(PPEAnalysisStatus, name="ppe_analysis_status"), index=True
+    )
+    detections: Mapped[list[dict[str, Any]]] = mapped_column(JSONB)
+    observed_items: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    color_observation: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    confidence_score: Mapped[float] = mapped_column(Float, index=True)
+    reasoning_metadata: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    needs_review: Mapped[bool] = mapped_column(
+        Boolean, default=False, index=True
+    )
+    analyzed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow
+    )
+
+
 class BiometricTemplate(Base):
     """Sensitive reference embedding; raw vectors never leave the backend."""
 
@@ -739,8 +861,14 @@ class IdentityMatch(Base):
     face_candidate_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("face_candidates.id", ondelete="SET NULL"), index=True
     )
+    body_candidate_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("body_candidates.id", ondelete="SET NULL"), index=True
+    )
     matched_template_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("biometric_templates.id", ondelete="SET NULL"), index=True
+    )
+    matched_body_embedding_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("body_embeddings.id", ondelete="SET NULL"), index=True
     )
     candidate_person_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("persons.id", ondelete="SET NULL"), index=True
